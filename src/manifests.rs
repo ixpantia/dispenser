@@ -111,6 +111,11 @@ impl DockerWatcher {
             Some(new_sha256) if self.last_digest == new_sha256 => DockerWatcherStatus::NotUpdated,
             Some(new_sha256) => {
                 self.last_digest = new_sha256;
+                log::info!(
+                    "Found a new version for {}:{}, update will start soon...",
+                    self.image,
+                    self.tag
+                );
                 DockerWatcherStatus::Updated
             }
         }

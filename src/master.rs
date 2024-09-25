@@ -51,7 +51,7 @@ impl DockerComposeMaster {
                 .stderr(Stdio::null())
                 .status();
             match exit_status {
-                Ok(es) if es.success() => log::info!("Updated correctly!"),
+                Ok(es) if es.success() => log::info!("Services are up and running!"),
                 Ok(es) => log::warn!(
                     "Docker compose up not successful exit with code {:?}",
                     es.code()
@@ -65,7 +65,7 @@ impl DockerComposeMaster {
             // Wait for an update msg before restarting the loop
             match update_recv.recv().expect("Broken pipe") {
                 MasterMsg::Update => {
-                    log::info!("Received updated message!, will start updating soon...");
+                    log::info!("Received update directive. Composing the updated services...");
                 }
                 MasterMsg::Stop => {
                     log::warn!("Received stop signal");
