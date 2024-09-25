@@ -1,13 +1,17 @@
+use std::path::PathBuf;
+
 use crate::manifests::DockerWatcher;
 
 #[derive(serde::Deserialize)]
 pub struct ContposeConfig {
+    pub path: PathBuf,
     image: Vec<Image>,
 }
 
 #[derive(serde::Deserialize)]
 struct Image {
     name: String,
+    tag: String,
 }
 
 impl ContposeConfig {
@@ -23,7 +27,7 @@ impl ContposeConfig {
     pub fn get_watchers(&self) -> Vec<DockerWatcher> {
         self.image
             .iter()
-            .map(|image| DockerWatcher::initialize(&image.name))
+            .map(|image| DockerWatcher::initialize(&image.name, &image.tag))
             .collect()
     }
 }

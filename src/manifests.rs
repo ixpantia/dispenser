@@ -60,6 +60,7 @@ pub struct Sha256 {
 
 pub struct DockerWatcher {
     image: Box<str>,
+    tag: Box<str>,
     last_digest: Sha256,
 }
 
@@ -92,14 +93,19 @@ fn token() -> &'static str {
 }
 
 impl DockerWatcher {
-    pub fn initialize(image: &str) -> Self {
-        let last_digest = get_latest_digest(registry(), user(), token(), image)
+    pub fn initialize(image: &str, tag: &str) -> Self {
+        let last_digest = get_latest_digest(registry(), user(), token(), image, tag)
             .expect("There is no initial image digest");
         let image = image.into();
-        DockerWatcher { image, last_digest }
+        let tag = tag.into();
+        DockerWatcher {
+            image,
+            last_digest,
+            tag,
+        }
     }
     pub fn update(&mut self) -> DockerWatcherStatus {
-        let new_sha256 = get_latest_digest(registry(), user(), token(), &self.image);
+        let new_sha256 = get_latest_digest(registry(), user(), token(), &self.image, &self.tag);
         match new_sha256 {
             None => DockerWatcherStatus::Deleted,
             Some(new_sha256) if self.last_digest == new_sha256 => DockerWatcherStatus::NotUpdated,
@@ -111,8 +117,14 @@ impl DockerWatcher {
     }
 }
 
-fn get_latest_digest(registry: &str, user: &str, token: &str, image: &str) -> Option<Sha256> {
-    let url = format!("https://{user}:{token}@{registry}/v2/{image}/manifests/latest");
+fn get_latest_digest(
+    registry: &str,
+    user: &str,
+    token: &str,
+    image: &str,
+    tag: &str,
+) -> Option<Sha256> {
+    let url = format!("https://{user}:{token}@{registry}/v2/{image}/manifests/{tag}");
     let val: DockerManifestsResponse = ureq::get(&url).call().unwrap().into_json().unwrap();
     val.get_digest("amd64", "linux")
 }

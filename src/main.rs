@@ -29,7 +29,7 @@ fn main() {
     // Create a docker-compose master.
     // This represents a process that manages
     // when docker compose is lifted or destroyed
-    let master = Arc::new(DockerComposeMaster::initialize("example"));
+    let master = Arc::new(DockerComposeMaster::initialize(&config.path));
 
     handle_ctrlc(master.clone());
 
