@@ -3,6 +3,7 @@ use manifests::DockerWatcherStatus;
 use master::{DockerComposeMaster, MasterMsg};
 use std::sync::Arc;
 mod config;
+mod login;
 mod manifests;
 mod master;
 
@@ -22,6 +23,9 @@ fn main() {
 
     // Initialize the loggr
     env_logger::init();
+
+    // Docker login
+    login::login();
 
     // Read the config in the current working directory
     let config = ContposeConfig::init();

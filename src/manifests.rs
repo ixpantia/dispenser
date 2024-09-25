@@ -1,3 +1,5 @@
+use crate::login::{registry, token, user};
+
 #[derive(serde::Deserialize)]
 pub struct DockerManifestsResponse {
     config: Option<Config>,
@@ -69,27 +71,6 @@ pub enum DockerWatcherStatus {
     NotUpdated,
     Updated,
     Deleted,
-}
-
-static REGISTRY: std::sync::OnceLock<Box<str>> = std::sync::OnceLock::new();
-static USER: std::sync::OnceLock<Box<str>> = std::sync::OnceLock::new();
-static TOKEN: std::sync::OnceLock<Box<str>> = std::sync::OnceLock::new();
-
-fn registry() -> &'static str {
-    REGISTRY
-        .get_or_init(|| std::env::var("CONTPOSE_REGISTRY").unwrap().into())
-        .as_ref()
-}
-
-fn user() -> &'static str {
-    USER.get_or_init(|| std::env::var("CONTPOSE_USER").unwrap().into())
-        .as_ref()
-}
-
-fn token() -> &'static str {
-    TOKEN
-        .get_or_init(|| std::env::var("CONTPOSE_TOKEN").unwrap().into())
-        .as_ref()
 }
 
 impl DockerWatcher {
