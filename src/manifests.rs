@@ -1,4 +1,5 @@
-use crate::login::{registry, token, user};
+use crate::login::get_docker_credentials;
+use std::sync::{Arc, Mutex};
 
 #[derive(serde::Deserialize)]
 pub struct DockerManifestsResponse {
@@ -60,10 +61,12 @@ pub struct Sha256 {
     pub inner: [u8; 64],
 }
 
+#[derive(Clone)]
 pub struct DockerWatcher {
+    registry: Box<str>,
     image: Box<str>,
     tag: Box<str>,
-    last_digest: Sha256,
+    last_digest: Arc<Mutex<Sha256>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -74,24 +77,35 @@ pub enum DockerWatcherStatus {
 }
 
 impl DockerWatcher {
-    pub fn initialize(image: &str, tag: &str) -> Self {
-        let last_digest = get_latest_digest(registry(), user(), token(), image, tag)
-            .expect("There is no initial image digest");
+    pub fn initialize(registry: &str, image: &str, tag: &str) -> Self {
+        log::info!("Initializing watch for {registry}/{image}:{tag}");
+        let (user, password) = get_docker_credentials(registry);
+        let last_digest = Arc::new(Mutex::new(
+            get_latest_digest(registry, &user, &password, image, tag)
+                .expect("There is no initial image digest"),
+        ));
+
+        let registry = registry.into();
         let image = image.into();
         let tag = tag.into();
         DockerWatcher {
+            registry,
             image,
             last_digest,
             tag,
         }
     }
-    pub fn update(&mut self) -> DockerWatcherStatus {
-        let new_sha256 = get_latest_digest(registry(), user(), token(), &self.image, &self.tag);
+    pub fn update(&self) -> DockerWatcherStatus {
+        let last_digest = *self.last_digest.lock().expect("Unable to lock mutex");
+        let (user, password) = get_docker_credentials(&self.registry);
+        let new_sha256 =
+            get_latest_digest(&self.registry, &user, &password, &self.image, &self.tag);
         match new_sha256 {
             None => DockerWatcherStatus::Deleted,
-            Some(new_sha256) if self.last_digest == new_sha256 => DockerWatcherStatus::NotUpdated,
+            Some(new_sha256) if last_digest == new_sha256 => DockerWatcherStatus::NotUpdated,
             Some(new_sha256) => {
-                self.last_digest = new_sha256;
+                let mut last_digest = self.last_digest.lock().expect("Unable to lock mutex");
+                *last_digest = new_sha256;
                 log::info!(
                     "Found a new version for {}:{}, update will start soon...",
                     self.image,

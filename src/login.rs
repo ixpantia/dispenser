@@ -1,74 +1,121 @@
 // cat ~/my_password.txt | docker login --username foo --password-stdin
 
-use std::io::{Read, Write};
+use base64::Engine;
+use std::collections::HashMap;
+use std::env;
+use std::error::Error;
+use std::fs::File;
+use std::io::BufReader;
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::Command;
 use std::process::Stdio;
 
-pub static REGISTRY: std::sync::OnceLock<Box<str>> = std::sync::OnceLock::new();
-pub static USER: std::sync::OnceLock<Box<str>> = std::sync::OnceLock::new();
-pub static TOKEN: std::sync::OnceLock<Box<str>> = std::sync::OnceLock::new();
-
-pub fn registry() -> &'static str {
-    REGISTRY
-        .get_or_init(|| std::env::var("CONTPOSE_REGISTRY").unwrap().into())
-        .as_ref()
+#[derive(serde::Deserialize, Debug)]
+struct AuthEntry {
+    auth: Option<String>,
 }
 
-pub fn user() -> &'static str {
-    USER.get_or_init(|| std::env::var("CONTPOSE_USER").unwrap().into())
-        .as_ref()
+#[derive(serde::Deserialize, Debug)]
+struct DockerConfig {
+    auths: Option<HashMap<String, AuthEntry>>,
+    #[serde(rename = "credsHelpers")]
+    creds_helpers: Option<HashMap<String, String>>,
+    #[serde(rename = "credsStore")]
+    creds_store: Option<String>,
 }
 
-pub fn token() -> &'static str {
-    TOKEN
-        .get_or_init(|| std::env::var("CONTPOSE_TOKEN").unwrap().into())
-        .as_ref()
+fn get_docker_config_path() -> Result<PathBuf, Box<dyn Error>> {
+    let home_dir = env::var("HOME")?;
+    let docker_config_path = PathBuf::from(home_dir).join(".docker").join("config.json");
+    Ok(docker_config_path)
 }
 
-pub fn login() {
-    let mut login_process = std::process::Command::new("docker")
-        .arg("login")
-        .args(["--username", user()])
-        .arg("--password-stdin")
-        .arg(registry())
+fn read_docker_config() -> Result<DockerConfig, Box<dyn Error>> {
+    let docker_config_path = get_docker_config_path()?;
+    let file = BufReader::new(File::open(docker_config_path)?);
+    let config: DockerConfig = serde_json::from_reader(file)?;
+    Ok(config)
+}
+
+#[derive(serde::Deserialize)]
+struct CredStoreOutput {
+    #[serde(rename = "Username")]
+    username: String,
+    #[serde(rename = "Secret")]
+    secret: String,
+}
+
+fn call_credential_helper(
+    helper: &str,
+    registry: &str,
+) -> Result<(String, String), Box<dyn Error>> {
+    let command = format!("docker-credential-{}", helper);
+    let mut process = Command::new(command)
+        .arg("get")
+        .stderr(Stdio::piped())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Unable to run docker login");
+        .spawn()?;
 
-    let mut login_stdin = login_process.stdin.take().expect("Unable to take stdin");
-    let mut login_stderr = login_process
-        .stderr
-        .take()
-        .expect("Unable to capture stderr");
+    let mut stdin = process.stdin.take().unwrap();
+    stdin.write_all(registry.as_bytes())?;
+    drop(stdin);
 
-    let mut login_stdout = login_process
-        .stdout
-        .take()
-        .expect("Unable to capture stderr");
+    let output = process.wait_with_output()?;
+    let output_str = String::from_utf8(output.stdout)?;
 
-    std::thread::spawn(move || {
-        login_stdin
-            .write_all(token().as_bytes())
-            .expect("Unable to write password to docker login");
-    });
+    let creds: CredStoreOutput = serde_json::from_str(&output_str)?;
+    let username = urlencoding::encode(&creds.username).to_string();
+    let secret = urlencoding::encode(&creds.secret).to_string();
 
-    let mut stdout = String::new();
-    let mut stderr = String::new();
+    Ok((username, secret))
+}
 
-    let _ = login_stdout.read_to_string(&mut stdout);
-    let _ = login_stderr.read_to_string(&mut stderr);
+fn decode_auth(auth: &str) -> Result<(String, String), Box<dyn Error>> {
+    let decoded = base64::prelude::BASE64_STANDARD.decode(auth)?;
+    let decoded_str = String::from_utf8(decoded)?;
+    let parts: Vec<&str> = decoded_str.split(':').collect();
 
-    match login_process.wait() {
-        Ok(es) if es.success() => log::info!("Successfully logged into registry"),
-        Ok(_) => {
-            log::warn!("Non zero exit status when logging in");
-            log::warn!("{stderr}");
-            std::process::exit(1);
+    if parts.len() != 2 {
+        return Err("Invalid auth format".into());
+    }
+
+    Ok((parts[0].to_string(), parts[1].to_string()))
+}
+
+pub fn get_docker_credentials_internal(registry: &str) -> Result<(String, String), Box<dyn Error>> {
+    let config = read_docker_config()?;
+
+    if let Some(cred_helpers) = config.creds_helpers {
+        if let Some(helper) = cred_helpers.get(registry) {
+            let helper_str = helper.as_str();
+            return call_credential_helper(helper_str, registry);
         }
-        Err(err) => {
-            log::error!("Error while trying to log in: {}", err);
-            log::warn!("{stderr}");
+    }
+
+    if let Some(helper) = config.creds_store {
+        let helper_str = helper.as_str();
+        return call_credential_helper(helper_str, registry);
+    }
+
+    // Fallback to plain text credentials from "auths"
+    if let Some(auths) = config.auths {
+        if let Some(auth_entry) = auths.get(registry) {
+            if let Some(auth) = auth_entry.auth.as_ref() {
+                return decode_auth(auth);
+            }
+        }
+    }
+
+    Err("No credentials found".into())
+}
+
+pub fn get_docker_credentials(registry: &str) -> (String, String) {
+    match get_docker_credentials_internal(registry) {
+        Ok(creds) => creds,
+        Err(e) => {
+            log::error!("Error retrieving credentails for {registry}: {e:?}");
             std::process::exit(1);
         }
     }

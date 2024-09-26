@@ -1,20 +1,11 @@
 use config::ContposeConfig;
-use manifests::DockerWatcherStatus;
-use master::{DockerComposeMaster, MasterMsg};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 mod config;
+mod instance;
 mod login;
 mod manifests;
 mod master;
-
-/// What should we do when the user stops
-/// this program?
-fn handle_ctrlc(master: Arc<DockerComposeMaster>) {
-    let _ = ctrlc::set_handler(move || {
-        log::warn!("Stopping contpose");
-        master.send_msg(MasterMsg::Stop);
-    });
-}
+mod signals;
 
 fn main() {
     // Allow the user to set environment
@@ -24,42 +15,16 @@ fn main() {
     // Initialize the loggr
     env_logger::init();
 
-    // Docker login
-    login::login();
-
-    // Read the config in the current working directory
     let config = ContposeConfig::init();
-
-    // Create a docker-compose master.
-    // This represents a process that manages
-    // when docker compose is lifted or destroyed
-    let master = Arc::new(DockerComposeMaster::initialize(&config.path));
-
-    handle_ctrlc(master.clone());
-
-    // Create the watchers for the differents
-    // images and tags
-    let mut watchers = config.get_watchers();
+    let instances = Arc::new(Mutex::new(config.get_instances()));
+    signals::handle_reload(instances.clone());
+    signals::handle_sigint(instances.clone());
 
     loop {
-        // Sleep for 5 seconds
-        std::thread::sleep(std::time::Duration::from_secs(5));
-
-        // try to update the watchers and check
-        // if any of them were updated
-        let any_updated = watchers
-            .iter_mut()
-            .any(|img| matches!(img.update(), DockerWatcherStatus::Updated));
-
-        // If any of the watchers were updated then we
-        // send a message to the master to update
-        if any_updated {
-            master.send_msg(MasterMsg::Update);
-        }
-
-        // If the master is done (exited) then break the loop
-        if master.is_done() {
-            break;
+        let instances = instances.lock().expect("Poisoned mutex").clone();
+        std::thread::sleep(instances.delay);
+        for instance in instances.inner {
+            instance.poll();
         }
     }
 }

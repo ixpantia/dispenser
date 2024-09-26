@@ -1,17 +1,14 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use crate::manifests::DockerWatcher;
+use crate::{
+    instance::{Instance, Instances},
+    manifests::DockerWatcher,
+};
 
 #[derive(serde::Deserialize)]
 pub struct ContposeConfig {
-    pub path: PathBuf,
-    image: Vec<Image>,
-}
-
-#[derive(serde::Deserialize)]
-struct Image {
-    name: String,
-    tag: String,
+    pub delay: u64,
+    pub instance: Vec<ContposeInstanceConfig>,
 }
 
 impl ContposeConfig {
@@ -24,10 +21,41 @@ impl ContposeConfig {
             .unwrap();
         toml::from_str(&config).unwrap()
     }
-    pub fn get_watchers(&self) -> Vec<DockerWatcher> {
-        self.image
+    pub fn get_instances(&self) -> Instances {
+        let inner = self
+            .instance
             .iter()
-            .map(|image| DockerWatcher::initialize(&image.name, &image.tag))
+            .cloned()
+            .map(Instance::new)
+            .map(Arc::new)
+            .collect();
+        let delay = std::time::Duration::from_secs(self.delay);
+        Instances { inner, delay }
+    }
+}
+
+#[derive(serde::Deserialize, Clone)]
+pub struct ContposeInstanceConfig {
+    pub path: PathBuf,
+    pub interval: Option<u64>,
+    images: Vec<Image>,
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct Image {
+    registry: String,
+    name: String,
+    tag: String,
+}
+
+impl ContposeInstanceConfig {
+    pub fn get_interval(&self) -> Duration {
+        std::time::Duration::from_secs(self.interval.unwrap_or(5))
+    }
+    pub fn get_watchers(&self) -> Vec<DockerWatcher> {
+        self.images
+            .iter()
+            .map(|image| DockerWatcher::initialize(&image.registry, &image.name, &image.tag))
             .collect()
     }
 }
