@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{num::NonZeroU64, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     instance::{Instance, Instances},
@@ -7,7 +7,7 @@ use crate::{
 
 #[derive(serde::Deserialize)]
 pub struct ContposeConfig {
-    pub delay: u64,
+    pub delay: NonZeroU64,
     pub instance: Vec<ContposeInstanceConfig>,
 }
 
@@ -15,7 +15,7 @@ impl ContposeConfig {
     pub fn init() -> Self {
         use std::io::Read;
         let mut config = String::new();
-        std::fs::File::open("contpose.toml")
+        std::fs::File::open(&crate::cli::get_cli_args().config)
             .expect("No contpose config")
             .read_to_string(&mut config)
             .unwrap();
@@ -29,7 +29,7 @@ impl ContposeConfig {
             .map(Instance::new)
             .map(Arc::new)
             .collect();
-        let delay = std::time::Duration::from_secs(self.delay);
+        let delay = std::time::Duration::from_secs(self.delay.get());
         Instances { inner, delay }
     }
 }

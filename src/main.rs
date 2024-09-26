@@ -1,5 +1,6 @@
 use config::ContposeConfig;
 use std::sync::{Arc, Mutex};
+mod cli;
 mod config;
 mod instance;
 mod login;
@@ -8,10 +9,6 @@ mod master;
 mod signals;
 
 fn main() {
-    // Allow the user to set environment
-    // variables on a .env file
-    dotenv::dotenv().ok();
-
     // Initialize the loggr
     env_logger::init();
 
