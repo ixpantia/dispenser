@@ -8,6 +8,7 @@ use crate::{
 #[derive(serde::Deserialize)]
 pub struct ContposeConfig {
     pub delay: NonZeroU64,
+    #[serde(default)]
     pub instance: Vec<ContposeInstanceConfig>,
 }
 
