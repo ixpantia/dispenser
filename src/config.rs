@@ -13,13 +13,13 @@ pub struct ContposeConfig {
 
 impl ContposeConfig {
     pub fn init() -> Self {
+        Self::try_init().unwrap()
+    }
+    pub fn try_init() -> Result<Self, Box<dyn std::error::Error>> {
         use std::io::Read;
         let mut config = String::new();
-        std::fs::File::open(&crate::cli::get_cli_args().config)
-            .expect("No contpose config")
-            .read_to_string(&mut config)
-            .unwrap();
-        toml::from_str(&config).unwrap()
+        std::fs::File::open(&crate::cli::get_cli_args().config)?.read_to_string(&mut config)?;
+        Ok(toml::from_str(&config)?)
     }
     pub fn get_instances(&self) -> Instances {
         let inner = self
