@@ -1,2 +1,7 @@
 /target
+/rpmbuild
 .env
+deb/usr/local/bin/compose-watcher
+rpm/usr/local/bin/compose-watcher
+*.deb
+*.rpm

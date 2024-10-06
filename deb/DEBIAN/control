@@ -1,0 +1,6 @@
+Package: compose-watcher
+Version: 0.1
+Maintainer: ixpantia S.A.
+Architecture: amd64
+Description: Continously Deploy services with Docker Compose
+Depends: docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin

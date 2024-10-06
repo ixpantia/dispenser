@@ -7,7 +7,7 @@ use clap::Parser;
 #[command(version, about, long_about = None)]
 pub struct Args {
     /// Path to the config file.
-    #[arg(short, long, default_value = "contpose.toml")]
+    #[arg(short, long, default_value = "compose-watcher.toml")]
     pub config: PathBuf,
 }
 

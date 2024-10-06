@@ -1,0 +1,17 @@
+[Unit]
+Description=Compose Watcher
+After=docker.service
+BindsTo=docker.service
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=compose-watcher
+Environment="RUST_LOG=info"
+ExecStart=/usr/local/bin/compose-watcher --config /opt/compose-watcher/compose-watcher.toml
+ExecReload=/bin/kill -HUP $MAINPID
+WorkingDirectory=/opt/compose-watcher
+
+[Install]
+WantedBy=multi-user.target
