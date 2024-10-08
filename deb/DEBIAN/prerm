@@ -2,6 +2,6 @@
 set -e
 
 if [ "$1" = "remove" ]; then
-    systemctl stop compose-watcher.service || true
-    systemctl disable compose-watcher.service || true
+    systemctl stop dispenser.service || true
+    systemctl disable dispenser.service || true
 fi

@@ -3,13 +3,13 @@ set -e
 
 if [ "$1" = "purge" ]; then
     systemctl daemon-reload || true
-    rm -f /lib/systemd/system/compose-watcher.service
+    rm -f /lib/systemd/system/dispenser.service
 fi
 
-rm -rf /usr/local/bin/compose-watcher
+rm -rf /usr/local/bin/dispenser
 
 if [ "$1" = "purge" ]; then
-    # Remove the compose-watcher user and its home directory
-    userdel -r compose-watcher || true
-    rm -rf /opt/compose-watcher
+    # Remove the dispenser user and its home directory
+    userdel -r dispenser || true
+    rm -rf /opt/dispenser
 fi

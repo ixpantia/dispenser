@@ -1,9 +1,9 @@
-# Compose Watcher
+# Dispenser
 
 This tool manages Docker Compose instances by constantly looking for new
 versions of images to deploying seemlessly.
 
-Compose Watcher works as a daemon that runs in the background of the host server.
+Dispenser works as a daemon that runs in the background of the host server.
 
 ## Build
 
@@ -23,7 +23,7 @@ make build-rpm
 ```
 
 
-This should create a file called roughly `../compose-watcher-$VERSION.x86_64.rpm`.
+This should create a file called roughly `../dispenser-$VERSION.x86_64.rpm`.
 
 ### Deb (Debian & Ubuntu)
 
@@ -40,5 +40,5 @@ Once these dependencies are installed run:
 make build-deb
 ```
 
-This should create a file called roughly `./compose-watcher.deb`.
+This should create a file called roughly `./dispenser.deb`.
 

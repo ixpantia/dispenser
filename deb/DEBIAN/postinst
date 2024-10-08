@@ -1,22 +1,23 @@
 #!/bin/sh
 set -e
 
-# Create the 'compose-watcher' user and home directory if it doesn't exist
-if ! id -u compose-watcher > /dev/null 2>&1; then
-    useradd -r -d /opt/compose-watcher -s /bin/false compose-watcher
-    mkdir -p /opt/compose-watcher
-    chown compose-watcher:compose-watcher /opt/compose-watcher
+# Create the 'dispenser' user and home directory if it doesn't exist
+if ! id -u dispenser > /dev/null 2>&1; then
+    useradd -r -d /opt/dispenser -s /bin/bash dispenser
+    usermod -aG docker dispenser
+    mkdir -p /opt/dispenser
+    chown dispenser:dispenser /opt/dispenser
 fi
 
-# Create the compose-watcher.toml file if it doesn't exist
-if [ ! -f /opt/compose-watcher/compose-watcher.toml ]; then
-    echo "delay=60 # Will watch for updates every 60 seconds" >> /opt/compose-watcher/compose-watcher.toml
-    chown compose-watcher:compose-watcher /opt/compose-watcher/compose-watcher.toml
+# Create the dispenser.toml file if it doesn't exist
+if [ ! -f /opt/dispenser/dispenser.toml ]; then
+    echo "delay=60 # Will watch for updates every 60 seconds" >> /opt/dispenser/dispenser.toml
+    chown dispenser:dispenser /opt/dispenser/dispenser.toml
 fi
 
 # Restart the service on upgrade
 if [ "$1" = "configure" ]; then
     systemctl daemon-reload || true
-    systemctl enable compose-watcher.service || true
-    systemctl start compose-watcher.service || true
+    systemctl enable dispenser.service || true
+    systemctl start dispenser.service || true
 fi
