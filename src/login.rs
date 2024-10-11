@@ -1,5 +1,3 @@
-// cat ~/my_password.txt | docker login --username foo --password-stdin
-
 use base64::Engine;
 use std::collections::HashMap;
 use std::env;
