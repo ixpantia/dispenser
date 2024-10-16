@@ -5,6 +5,22 @@ versions of images to deploying seemlessly.
 
 Dispenser works as a daemon that runs in the background of the host server.
 
+## Example config
+
+This is an example config that you can base yours around. This config
+listens to changes on the `nginx:latest` image and reloads the
+docker compose found in the directory `/opt/dispenser/example`.
+
+```toml
+delay=60 # Will watch for updates every 60 seconds
+
+[[instance]]
+path = "example"
+images = [
+  { registry = "docker.io", name = "nginx", tag = "latest" }
+]
+```
+
 ## Build
 
 ### RPM (RHEL)
