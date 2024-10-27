@@ -17,10 +17,10 @@ build-deb: build
 	mv deb.deb dispenser.deb
 
 build-rpm: build
-	mkdir -p deb/usr/local/bin/
+	mkdir -p rpm/usr/local/bin/
 	rm -f $(USR_BIN_RPM)
 	mv $(TARGET_BIN) $(USR_BIN_RPM)
 	cp -r rpm/ rpmbuild
-	mkdir -p rpmbuild/opt/dispenser
+	mkdir -p rpmbuild/opt/dispenser 
 	rpmbuild --target=x86_64 --buildroot $(WORK_DIR)/rpmbuild \
          -bb rpmbuild/dispenser.spec
