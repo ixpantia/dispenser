@@ -1,4 +1,4 @@
-use crate::login::get_docker_credentials;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 #[derive(serde::Deserialize)]
@@ -79,10 +79,8 @@ pub enum DockerWatcherStatus {
 impl DockerWatcher {
     pub fn initialize(registry: &str, image: &str, tag: &str) -> Self {
         log::info!("Initializing watch for {registry}/{image}:{tag}");
-        let (user, password) = get_docker_credentials(registry);
         let last_digest = Arc::new(Mutex::new(
-            get_latest_digest(registry, &user, &password, image, tag)
-                .expect("There is no initial image digest"),
+            get_latest_digest(registry, image, tag).expect("There is no initial image digest"),
         ));
 
         let registry = registry.into();
@@ -97,9 +95,7 @@ impl DockerWatcher {
     }
     pub fn update(&self) -> DockerWatcherStatus {
         let last_digest = *self.last_digest.lock().expect("Unable to lock mutex");
-        let (user, password) = get_docker_credentials(&self.registry);
-        let new_sha256 =
-            get_latest_digest(&self.registry, &user, &password, &self.image, &self.tag);
+        let new_sha256 = get_latest_digest(&self.registry, &self.image, &self.tag);
         match new_sha256 {
             None => DockerWatcherStatus::Deleted,
             Some(new_sha256) if last_digest == new_sha256 => DockerWatcherStatus::NotUpdated,
@@ -117,14 +113,20 @@ impl DockerWatcher {
     }
 }
 
-fn get_latest_digest(
-    registry: &str,
-    user: &str,
-    token: &str,
-    image: &str,
-    tag: &str,
-) -> Option<Sha256> {
-    let url = format!("https://{user}:{token}@{registry}/v2/{image}/manifests/{tag}");
-    let val: DockerManifestsResponse = ureq::get(&url).call().unwrap().into_json().unwrap();
+fn get_latest_digest(registry: &str, image: &str, tag: &str) -> Option<Sha256> {
+    let output_result = std::process::Command::new("docker")
+        .args(["manifest", "inspect"])
+        .arg(format!("{registry}/{image}:{tag}"))
+        .output();
+    let val: DockerManifestsResponse = match output_result {
+        Ok(manifest_output) => {
+            std::io::stdout().write_all(&manifest_output.stdout);
+            serde_json::from_slice(&manifest_output.stdout).ok()?
+        }
+        Err(e) => {
+            log::error!("Unable to get manifest for {registry}/{image}:{tag}: {e}");
+            return None;
+        }
+    };
     val.get_digest("amd64", "linux")
 }

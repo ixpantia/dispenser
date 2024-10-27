@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 mod cli;
 mod config;
 mod instance;
-mod login;
 mod manifests;
 mod master;
 mod signals;
