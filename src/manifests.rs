@@ -119,10 +119,7 @@ fn get_latest_digest(registry: &str, image: &str, tag: &str) -> Option<Sha256> {
         .arg(format!("{registry}/{image}:{tag}"))
         .output();
     let val: DockerManifestsResponse = match output_result {
-        Ok(manifest_output) => {
-            std::io::stdout().write_all(&manifest_output.stdout);
-            serde_json::from_slice(&manifest_output.stdout).ok()?
-        }
+        Ok(manifest_output) => serde_json::from_slice(&manifest_output.stdout).ok()?,
         Err(e) => {
             log::error!("Unable to get manifest for {registry}/{image}:{tag}: {e}");
             return None;
