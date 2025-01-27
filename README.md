@@ -1,15 +1,20 @@
 # Dispenser
 
-This tool manages Docker Compose instances by constantly looking for new
-versions of images to deploying seemlessly.
+This tool manages applications defined in Docker Compose by continuously
+monitoring your artifact registry for new versions of Docker images. When
+updates are detected, dispenser automatically deploys the new versions of your
+services with zero downtime, updating the running containers on the host
+machine.
 
-Dispenser works as a daemon that runs in the background of the host server.
+dispenser operates as a daemon that runs in the background on the host server
+that watches your artifact registry, detecting when new versions of your
+container images are published.
 
-## Example config
+## Example configuration
 
-This is an example config that you can base yours around. This config
-listens to changes on the `nginx:latest` image and reloads the
-docker compose found in the directory `/opt/dispenser/example`.
+This is an example configuration (in a toml config file) that you can base
+yours around. This configuration listens to changes on the `nginx:latest` image
+and reloads the docker compose found in the directory `/opt/dispenser/example`.
 
 ```toml
 delay=60 # Will watch for updates every 60 seconds
@@ -25,7 +30,8 @@ images = [
 
 ### RPM (RHEL)
 
-To build rpm make sure you have the following installed:
+Before you try to build an rpm package, make sure you have the following
+installed:
 
 - `cargo`: Rust package manager and build tool
 - `rustc`: Rust compiler
@@ -38,12 +44,14 @@ Once these dependencies are installed run:
 make build-rpm
 ```
 
-
-This should create a file called roughly `../dispenser-$VERSION.x86_64.rpm`.
+This should create a file called something along the lines of
+`../dispenser-$VERSION.x86_64.rpm`. There may be minor variations on the Linux
+distribution where you are building the package.
 
 ### Deb (Debian & Ubuntu)
 
-To build deb make sure you have the following installed:
+Before you try to build a deb package, make sure you have the following
+installed:
 
 - `cargo`: Rust package manager and build tool
 - `rustc`: Rust compiler
@@ -56,5 +64,7 @@ Once these dependencies are installed run:
 make build-deb
 ```
 
-This should create a file called roughly `./dispenser.deb`.
+This should create a file called something along the lines of
+`./dispenser.deb`. There may be minor variations on the Linux
+distribution where you are building the package.
 
