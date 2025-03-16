@@ -1,0 +1,34 @@
+version: "3"
+
+vars:
+  DISPENSER_VERSION: 0.2
+  TARGET_BIN: "target/x86_64-unknown-linux-musl/release/dispenser"
+  USR_BIN_DEB: "deb/usr/local/bin/dispenser"
+  USR_BIN_RPM: "rpm/usr/local/bin/dispenser"
+
+tasks:
+  build:
+    cmds:
+      - CARGO_TARGET_DIR="./target" cargo build --release --target "x86_64-unknown-linux-musl"
+
+  build-deb:
+    deps:
+      - build
+    cmds:
+      - mkdir -p deb/usr/local/bin/
+      - rm -f {{.USR_BIN_DEB}}
+      - mv {{.TARGET_BIN}} {{.USR_BIN_DEB}}
+      - dpkg-deb --build deb
+      - rm -f dispenser.deb
+      - mv deb.deb dispenser-{{.DISPENSER_VERSION}}-0.x86_64.deb
+
+  build-rpm:
+    deps:
+      - build
+    cmds:
+      - mkdir -p rpm/usr/local/bin/
+      - rm -f {{.USR_BIN_RPM}}
+      - mv {{.TARGET_BIN}} {{.USR_BIN_RPM}}
+      - cp -r rpm/ rpmbuild
+      - mkdir -p rpmbuild/opt/dispenser
+      - rpmbuild --target=x86_64 --buildroot $(pwd)/rpmbuild -bb rpmbuild/dispenser.spec
