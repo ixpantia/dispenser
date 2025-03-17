@@ -12,9 +12,6 @@ Requires: docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-comp
 %define _unpackaged_files_terminate_build 0
 
 %post
-#!/bin/sh
-set -e
-
 # Create the 'dispenser' user and home directory if it doesn't exist
 if ! id -u dispenser > /dev/null 2>&1; then
     useradd -r -d /opt/dispenser -s /bin/bash dispenser
@@ -37,25 +34,24 @@ systemctl start dispenser.service || true
 
 
 %preun
-#!/bin/sh
-set -e
-
 systemctl stop dispenser.service || true
 systemctl disable dispenser.service || true
 
 
 %postun
-#!/bin/sh
-set -e
+if [ $1 = 0 ]
+then
+    # the package is really being uninstalled, not upgraded
+    systemctl daemon-reload || true
+    rm -f /lib/systemd/system/dispenser.service
 
-systemctl daemon-reload || true
-rm -f /lib/systemd/system/dispenser.service
+    rm -rf /usr/local/bin/dispenser
 
-rm -rf /usr/local/bin/dispenser
+    # Remove the dispenser user and its home directory
+    userdel -r dispenser || true
+    rm -rf /opt/dispenser
+fi
 
-# Remove the dispenser user and its home directory
-userdel -r dispenser || true
-rm -rf /opt/dispenser
 
 
 %description
