@@ -1,5 +1,5 @@
 [Unit]
-Description=Compose Watcher
+Description=Dispenser
 After=docker.service
 BindsTo=docker.service
 StartLimitIntervalSec=0
