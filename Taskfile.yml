@@ -1,7 +1,7 @@
 version: "3"
 
 vars:
-  DISPENSER_VERSION: 0.2
+  DISPENSER_VERSION: 0.3
   TARGET_BIN: "target/x86_64-unknown-linux-musl/release/dispenser"
   USR_BIN_DEB: "deb/usr/local/bin/dispenser"
   USR_BIN_RPM: "rpm/usr/local/bin/dispenser"
