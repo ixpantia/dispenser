@@ -1,5 +1,5 @@
 Name: dispenser
-Version: 0.2
+Version: 0.3
 Release: 0
 Summary: Continously Deploy services with Docker Compose
 License: see /usr/share/doc/dispenser/copyright
@@ -17,6 +17,7 @@ if ! id -u dispenser > /dev/null 2>&1; then
     useradd -r -d /opt/dispenser -s /bin/bash dispenser
     usermod -aG docker dispenser
     mkdir -p /opt/dispenser
+    chmod -R 700 /opt/dispenser
     chown dispenser:dispenser /opt/dispenser
     chmod -R 700 /opt/dispenser
 fi
