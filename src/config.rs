@@ -1,4 +1,13 @@
-use std::{num::NonZeroU64, path::PathBuf, sync::Arc, time::Duration};
+use rayon::prelude::*;
+
+use std::{
+    num::NonZeroU64,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
+use cron::Schedule;
 
 use crate::{
     instance::{Instance, Instances},
@@ -25,11 +34,12 @@ impl ContposeConfig {
     pub fn get_instances(&self) -> Instances {
         let inner = self
             .instance
-            .iter()
+            .par_iter()
+            .with_max_len(1)
             .cloned()
-            .map(Instance::new)
-            .map(Arc::new)
-            .collect();
+            .map(|instance| Arc::new(Mutex::new(Instance::new(instance))))
+            .collect::<Vec<_>>();
+
         let delay = std::time::Duration::from_secs(self.delay.get());
         Instances { inner, delay }
     }
@@ -38,8 +48,10 @@ impl ContposeConfig {
 #[derive(serde::Deserialize, Clone)]
 pub struct ContposeInstanceConfig {
     pub path: PathBuf,
-    pub interval: Option<u64>,
+    #[serde(default)]
     images: Vec<Image>,
+    #[serde(default)]
+    pub cron: Option<Schedule>,
 }
 
 #[derive(serde::Deserialize, Clone)]
@@ -50,9 +62,6 @@ struct Image {
 }
 
 impl ContposeInstanceConfig {
-    pub fn get_interval(&self) -> Duration {
-        std::time::Duration::from_secs(self.interval.unwrap_or(5))
-    }
     pub fn get_watchers(&self) -> Vec<DockerWatcher> {
         self.images
             .iter()

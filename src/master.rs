@@ -62,8 +62,23 @@ impl Drop for DockerComposeMaster {
 
 pub enum MasterMsg {
     Detach,
-    Update,
+    Update(Action),
     Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Update,
+    Recreate,
+}
+
+impl Action {
+    fn flags(self) -> &'static [&'static str] {
+        match self {
+            Action::Update => &[],
+            Action::Recreate => &["--force-recreate"],
+        }
+    }
 }
 
 impl DockerComposeMaster {
@@ -81,6 +96,7 @@ impl DockerComposeMaster {
         let status = Arc::clone(&status_shared);
         let (update_msg, update_recv) = std::sync::mpsc::channel::<MasterMsg>();
         let path: Box<Path> = path.as_ref().into();
+        let mut action = Action::Update;
         let watch_fn = {
             let path = path.clone();
             move || loop {
@@ -88,6 +104,7 @@ impl DockerComposeMaster {
                     .arg("compose")
                     .arg("up")
                     .args(["--pull", "always"])
+                    .args(action.flags())
                     .arg("-d")
                     .current_dir(&path)
                     .stdin(Stdio::null())
@@ -111,8 +128,12 @@ impl DockerComposeMaster {
 
                 // Wait for an update msg before restarting the loop
                 match update_recv.recv().expect("Broken pipe") {
-                    MasterMsg::Update => {
-                        log::info!("Received update directive. Composing the updated services at {path:?}...");
+                    MasterMsg::Update(next_action) => {
+                        action = next_action;
+                        match action {
+                            Action::Update => log::info!("Received update directive. Composing the updated services at {path:?}..."),
+                            Action::Recreate => log::info!("Received run/restart directive. Recreating the updated services at {path:?}...")
+                        };
                     }
                     MasterMsg::Stop => {
                         log::warn!("Received stop signal for instace {path:?}");

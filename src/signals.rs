@@ -18,16 +18,21 @@ pub fn handle_sigint(instances: Arc<Mutex<Instances>>) {
             let current_instances = instances.lock().expect("Unable to lock").clone();
 
             for curr_instance in &current_instances.inner {
-                curr_instance.master.send_msg(MasterMsg::Stop);
+                curr_instance
+                    .lock()
+                    .expect("Lock Poissoned. Please report this bug.")
+                    .master
+                    .send_msg(MasterMsg::Stop);
             }
 
             // Wait until all current instances are stopped or detached
             loop {
-                if current_instances
-                    .inner
-                    .iter()
-                    .all(|inst| inst.master.is_stopped())
-                {
+                if current_instances.inner.iter().all(|inst| {
+                    inst.lock()
+                        .expect("Lock Poissoned. Please Report")
+                        .master
+                        .is_stopped()
+                }) {
                     std::process::exit(0);
                 }
             }
@@ -50,6 +55,9 @@ pub fn handle_reload(instances: Arc<Mutex<Instances>>) {
                     let current_instances = instances.lock().expect("Unable to lock").clone();
 
                     for curr_instance in &current_instances.inner {
+                        let curr_instance = curr_instance
+                            .lock()
+                            .expect("Poissoned Lock. Please report this bug!");
                         // Is the new config does not include the current instance we
                         // send a message to stop
                         if !new_config
@@ -65,11 +73,12 @@ pub fn handle_reload(instances: Arc<Mutex<Instances>>) {
 
                     // Wait until all current instances are stopped or detached
                     loop {
-                        if current_instances
-                            .inner
-                            .iter()
-                            .all(|inst| inst.master.is_stopped())
-                        {
+                        if current_instances.inner.iter().all(|inst| {
+                            inst.lock()
+                                .expect("Lock Poissoned, please report this bug.")
+                                .master
+                                .is_stopped()
+                        }) {
                             break;
                         }
                     }

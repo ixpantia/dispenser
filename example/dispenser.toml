@@ -1,0 +1,11 @@
+delay = 60
+
+[[instance]]
+path = "nginx"
+# Will restart the service every minute or when the nginx image gets updated
+cron = "0 */1 * * * *"
+images = [{ registry = "docker.io", name = "nginx", tag = "latest" }]
+
+[[instance]]
+path = "hello-world"
+cron = "*/10 * * * * *"
