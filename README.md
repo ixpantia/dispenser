@@ -129,14 +129,14 @@ Now, tell Dispenser to monitor your image for updates.
     ```toml
     # How often to check for new images, in seconds.
     delay = 60
-    
+
     [[instance]]
     # Path is relative to /opt/dispenser
     path = "my-app"
-    images = [
-      { registry = "ghcr.io", name = "my-org/my-app", tag = "latest" }
-    ]
+    images = [{ registry = "ghcr.io", name = "my-org/my-app", tag = "latest" }]
     ```
+
+    Dispenser also supports scheduled deployments using `cron` expressions. For more details on configuring periodic restarts, see the [cron documentation](CRON.md).
 
 ### Step 5: Start and Verify the Deployment
 
