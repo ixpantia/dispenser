@@ -7,8 +7,8 @@ Distribution: Debian
 Group: Converted/unknown
 Requires: docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin, gnupg2, pass
 
-%define _rpmdir ./
-%define _rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm
+
+
 %define _unpackaged_files_terminate_build 0
 
 %post
