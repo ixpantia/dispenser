@@ -4,7 +4,6 @@ use std::{
     num::NonZeroU64,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use cron::Schedule;
@@ -45,6 +44,23 @@ impl ContposeConfig {
     }
 }
 
+/// Defines when a service should be initialized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Default)]
+pub enum Initialize {
+    /// The service is started as soon as the application starts.
+    #[serde(alias = "immediately", alias = "Immediately")]
+    #[default]
+    Immediately,
+    /// The service is started only when a trigger occurs (e.g., a cron schedule or a detected image update).
+    #[serde(
+        alias = "on-trigger",
+        alias = "OnTrigger",
+        alias = "on_trigger",
+        alias = "on trigger"
+    )]
+    OnTrigger,
+}
+
 #[derive(serde::Deserialize, Clone)]
 pub struct ContposeInstanceConfig {
     pub path: PathBuf,
@@ -52,6 +68,12 @@ pub struct ContposeInstanceConfig {
     images: Vec<Image>,
     #[serde(default)]
     pub cron: Option<Schedule>,
+    /// Defines when the service should be initialized.
+    ///
+    /// - `Immediately` (default): The service is started as soon as the application starts.
+    /// - `OnTrigger`: The service is started only when a trigger occurs (e.g., a cron schedule or a detected image update).
+    #[serde(default)]
+    pub initialize: Initialize,
 }
 
 #[derive(serde::Deserialize, Clone)]

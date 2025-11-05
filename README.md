@@ -138,7 +138,39 @@ Now, tell Dispenser to monitor your image for updates.
 
     Dispenser also supports scheduled deployments using `cron` expressions. For more details on configuring periodic restarts, see the [cron documentation](CRON.md).
 
-### Step 5: Start and Verify the Deployment
+### Step 5: Service Initialization (Optional)
+
+By default, Dispenser starts services as soon as the application launches. However, you can control this behavior using the `initialize` option in your `dispenser.toml` file. This is particularly useful for services that should only run on a specific schedule.
+
+The `initialize` option can be set to one of two values:
+
+- `immediately` (Default): The service is started as soon as Dispenser starts. If you don't specify the `initialize` option, this is the default behavior.
+- `on-trigger`: The service will not start on application launch. Instead, it will be initialized only when a trigger occurs. Triggers can be either a cron schedule or a detected update to a watched image.
+
+#### Example: Immediate Initialization
+
+This is the default behavior. The following configuration will start the `my-app` service immediately.
+
+```toml
+[[instance]]
+path = "my-app"
+images = [{ registry = "ghcr.io", name = "my-org/my-app", tag = "latest" }]
+# initialize = "immediately" # This line is optional
+```
+
+#### Example: Initialization on Trigger
+
+This configuration is useful for scheduled tasks. The `backup-service` will not start immediately. Instead, it will be triggered to run based on the cron schedule.
+
+```toml
+[[instance]]
+path = "backup-service"
+cron = "0 3 * * *" # Run every day at 3 AM
+initialize = "on-trigger"
+```
+In this example, the service defined in the `backup-service` directory will only be started when the cron schedule is met. After its first run, it will continue to be managed by its cron schedule.
+
+### Step 6: Start and Verify the Deployment
 
 1.  Exit the `dispenser` user session to return to your regular user.
     ```sh

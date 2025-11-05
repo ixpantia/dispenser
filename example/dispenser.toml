@@ -2,10 +2,16 @@ delay = 60
 
 [[instance]]
 path = "nginx"
-# Will restart the service every minute or when the nginx image gets updated
-cron = "0 */1 * * * *"
+# This service will be started immediately on startup, which is the default behavior.
+# It will be updated if a new 'nginx:latest' image is detected.
 images = [{ registry = "docker.io", name = "nginx", tag = "latest" }]
 
 [[instance]]
 path = "hello-world"
 cron = "*/10 * * * * *"
+# This service will only be initialized when a trigger occurs. In this case,
+# the cron schedule will trigger it every 10 seconds. It will not be started
+# on application launch.
+#
+# The value can be "on-trigger", "OnTrigger", "on_trigger", or "on trigger".
+initialize = "on-trigger"

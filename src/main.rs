@@ -7,8 +7,8 @@ mod manifests;
 mod master;
 mod signals;
 
-const LOOP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
-const NUM_THREADS: usize = 500;
+const LOOP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+const NUM_THREADS: usize = 250;
 
 fn main() {
     rayon::ThreadPoolBuilder::new()

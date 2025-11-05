@@ -47,7 +47,10 @@ impl Instance {
         // This represents a process that manages
         // when docker compose is lifted or destroyed
         let cron_watcher = config.cron.as_ref().map(CronWatcher::new);
-        let master = Arc::new(DockerComposeMaster::initialize(&config.path));
+        let master = Arc::new(DockerComposeMaster::initialize(
+            &config.path,
+            config.initialize,
+        ));
         let watchers = config.get_watchers();
         Self {
             master,
@@ -61,6 +64,11 @@ impl Instance {
         if let Some(cron_watcher) = &mut self.cron_watcher {
             if cron_watcher.is_ready() {
                 self.master.send_msg(MasterMsg::Update(Action::Recreate));
+                log::info!(
+                    "Triggering {:?}! Next scheduled trigger at {:?}",
+                    self.config.path,
+                    cron_watcher.next
+                );
                 // If the cron matches we can short cirtcuit the function
                 return;
             }

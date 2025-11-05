@@ -9,6 +9,8 @@ use std::{
     thread::JoinHandle,
 };
 
+use crate::config::Initialize;
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[repr(u32)]
 enum MasterStatus {
@@ -85,55 +87,53 @@ impl DockerComposeMaster {
     pub fn is_stopped(&self) -> bool {
         self.status.load(Ordering::SeqCst) == MasterStatus::Stopped
     }
-    pub fn is_started(&self) -> bool {
-        self.status.load(Ordering::SeqCst) == MasterStatus::Started
-    }
     pub fn send_msg(&self, msg: MasterMsg) {
         let _ = self.update_msg.send(msg);
     }
-    pub fn initialize(path: impl AsRef<Path>) -> Self {
+    pub fn initialize(path: impl AsRef<Path>, initialize: Initialize) -> Self {
         let status_shared = Arc::new(AtomicMasterStatus::new(MasterStatus::Stopped));
         let status = Arc::clone(&status_shared);
         let (update_msg, update_recv) = std::sync::mpsc::channel::<MasterMsg>();
+
+        if matches!(initialize, Initialize::Immediately) {
+            let _ = update_msg.send(MasterMsg::Update(Action::Recreate));
+        }
+
         let path: Box<Path> = path.as_ref().into();
-        let mut action = Action::Update;
         let watch_fn = {
             let path = path.clone();
             move || loop {
-                let exit_status = Command::new("docker")
-                    .arg("compose")
-                    .arg("up")
-                    .args(["--pull", "always"])
-                    .args(action.flags())
-                    .arg("-d")
-                    .current_dir(&path)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-                match exit_status {
-                    Ok(es) if es.success() => {
-                        log::info!("Services for {path:?} are up and running!");
-                        status_shared.store(MasterStatus::Started, Ordering::SeqCst);
-                    }
-                    Ok(es) => log::warn!(
-                        "Docker compose up at {path:?} not successful exit with code {:?}",
-                        es.code()
-                    ),
-                    Err(e) => {
-                        log::error!("Failed to invoce docker compose at {path:?}: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-
                 // Wait for an update msg before restarting the loop
                 match update_recv.recv().expect("Broken pipe") {
-                    MasterMsg::Update(next_action) => {
-                        action = next_action;
+                    MasterMsg::Update(action) => {
                         match action {
                             Action::Update => log::info!("Received update directive. Composing the updated services at {path:?}..."),
-                            Action::Recreate => log::info!("Received run/restart directive. Recreating the updated services at {path:?}...")
+                            Action::Recreate => log::info!("Received run/restart directive. Recreating the updated services at {path:?}..."),
                         };
+                        let exit_status = Command::new("docker")
+                            .arg("compose")
+                            .arg("up")
+                            .args(["--pull", "always"])
+                            .args(action.flags())
+                            .arg("-d")
+                            .current_dir(&path)
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status();
+                        match exit_status {
+                            Ok(es) if es.success() => {
+                                log::info!("Services for {path:?} are up and running!");
+                                status_shared.store(MasterStatus::Started, Ordering::SeqCst);
+                            }
+                            Ok(es) => log::warn!(
+                                "Docker compose up at {path:?} not successful exit with code {:?}",
+                                es.code()
+                            ),
+                            Err(e) => {
+                                log::error!("Failed to invoce docker compose at {path:?}: {}", e);
+                            }
+                        }
                     }
                     MasterMsg::Stop => {
                         log::warn!("Received stop signal for instace {path:?}");
