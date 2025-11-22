@@ -9,7 +9,7 @@ use std::{
     thread::JoinHandle,
 };
 
-use crate::config::Initialize;
+use crate::config::{DispenserVars, Initialize};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[repr(u32)]
@@ -90,7 +90,7 @@ impl DockerComposeMaster {
     pub fn send_msg(&self, msg: MasterMsg) {
         let _ = self.update_msg.send(msg);
     }
-    pub fn initialize(path: impl AsRef<Path>, initialize: Initialize) -> Self {
+    pub fn initialize(path: impl AsRef<Path>, initialize: Initialize, vars: DispenserVars) -> Self {
         let status_shared = Arc::new(AtomicMasterStatus::new(MasterStatus::Stopped));
         let status = Arc::clone(&status_shared);
         let (update_msg, update_recv) = std::sync::mpsc::channel::<MasterMsg>();
@@ -117,6 +117,7 @@ impl DockerComposeMaster {
                             .args(action.flags())
                             .arg("-d")
                             .current_dir(&path)
+                            .envs(vars.inner.iter())
                             .stdin(Stdio::null())
                             .stdout(Stdio::null())
                             .stderr(Stdio::null())
@@ -139,7 +140,7 @@ impl DockerComposeMaster {
                         log::warn!("Received stop signal for instace {path:?}");
                         let _ = Command::new("docker")
                             .arg("compose")
-                            .arg("down")
+                            .arg("stop")
                             .current_dir(&path)
                             .stdin(Stdio::null())
                             .stdout(Stdio::null())

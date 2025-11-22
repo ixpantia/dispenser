@@ -2,11 +2,11 @@ use minijinja::Environment;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use std::{collections::HashMap, num::NonZeroU64, path::PathBuf};
+use std::{collections::HashMap, num::NonZeroU64, path::PathBuf, sync::Arc};
 
 use cron::Schedule;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DispenserVars {
     inner: HashMap<String, String>,
 }
@@ -49,10 +49,17 @@ impl DispenserVars {
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub struct DispenserConfigFile {
+pub struct DispenserConfigFileSerde {
     pub delay: NonZeroU64,
     #[serde(default)]
     pub instance: Vec<DispenserInstanceConfigEntry>,
+}
+
+#[derive(Debug)]
+pub struct DispenserConfigFile {
+    pub delay: NonZeroU64,
+    pub instance: Vec<DispenserInstanceConfigEntry>,
+    pub vars: DispenserVars,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -68,14 +75,28 @@ pub enum DispenserConfigError {
 impl DispenserConfigFile {
     fn try_init_from_string(
         mut config: String,
-        vars: &DispenserVars,
+        vars: DispenserVars,
     ) -> Result<Self, DispenserConfigError> {
         let mut env = Environment::new();
+
+        let syntax = minijinja::syntax::SyntaxConfig::builder()
+            .variable_delimiters("${", "}")
+            .build()
+            .expect("This really should not fail. If this fail something has gone horribly wrong.");
+
+        env.set_syntax(syntax);
+
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
         let template = env.template_from_str(&config)?;
         config = template.render(&vars)?;
 
-        Ok(toml::from_str(&config)?)
+        let config_toml: DispenserConfigFileSerde = toml::from_str(&config)?;
+
+        Ok(DispenserConfigFile {
+            delay: config_toml.delay,
+            instance: config_toml.instance,
+            vars,
+        })
     }
     pub fn try_init() -> Result<Self, DispenserConfigError> {
         use std::io::Read;
@@ -84,7 +105,7 @@ impl DispenserConfigFile {
         // Use handle vars to replace strings with handlevars
         let vars = DispenserVars::try_init()?;
 
-        Self::try_init_from_string(config, &vars)
+        Self::try_init_from_string(config, vars)
     }
 }
 
@@ -138,6 +159,9 @@ struct Image {
 
 impl DispenserConfigFile {
     pub fn into_config(self) -> crate::config::ContposeConfig {
+        let vars = crate::config::DispenserVars {
+            inner: Arc::new(self.vars.inner),
+        };
         let instances = self
             .instance
             .into_par_iter()
@@ -154,6 +178,7 @@ impl DispenserConfigFile {
                     .collect(),
                 cron: instance.cron,
                 initialize: instance.initialize.into(),
+                vars: vars.clone(),
             })
             .collect();
 
@@ -190,18 +215,18 @@ mod tests {
         let vars = DispenserVars::try_init_from_string(vars_input).unwrap();
 
         let config_input = r#"
-            delay = {{ delay_ms }}
+            delay = ${ delay_ms }
             [[instance]]
-            path = "{{ base_path }}/service"
+            path = "${ base_path }/service"
             initialize = "on-trigger"
 
             [[instance.images]]
             registry = "hub"
             name = "service"
-            tag = "{{ img_version }}"
+            tag = "${ img_version }"
         "#;
 
-        let config = DispenserConfigFile::try_init_from_string(config_input.to_string(), &vars)
+        let config = DispenserConfigFile::try_init_from_string(config_input.to_string(), vars)
             .expect("Failed to parse config");
 
         assert_eq!(config.delay.get(), 500);
@@ -228,7 +253,8 @@ mod tests {
             path = "."
         "#;
         let cfg =
-            DispenserConfigFile::try_init_from_string(default_config.to_string(), &vars).unwrap();
+            DispenserConfigFile::try_init_from_string(default_config.to_string(), vars.clone())
+                .unwrap();
         assert_eq!(cfg.instance[0].initialize, Initialize::Immediately);
 
         // Test aliases
@@ -251,7 +277,7 @@ mod tests {
             "#,
                 alias
             );
-            let cfg = DispenserConfigFile::try_init_from_string(toml, &vars).unwrap();
+            let cfg = DispenserConfigFile::try_init_from_string(toml, vars.clone()).unwrap();
             assert_eq!(cfg.instance[0].initialize, expected);
         }
     }
@@ -264,9 +290,9 @@ mod tests {
         let config = r#"
             delay = 1
             [[instance]]
-            path = "{{ non_existent }}"
+            path = "${ non_existent }"
         "#;
-        let res = DispenserConfigFile::try_init_from_string(config.to_string(), &vars);
+        let res = DispenserConfigFile::try_init_from_string(config.to_string(), vars.clone());
         assert!(
             matches!(res, Err(DispenserConfigError::Template(_))),
             "{:?}",

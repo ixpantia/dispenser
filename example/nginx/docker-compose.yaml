@@ -1,6 +1,6 @@
 version: "3.8"
 services:
   nginx:
-    image: nginx:latest
+    image: ${docker_io}/nginx:latest
     ports:
       - "8080:80"

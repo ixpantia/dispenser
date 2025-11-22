@@ -50,6 +50,7 @@ impl Instance {
         let master = Arc::new(DockerComposeMaster::initialize(
             &config.path,
             config.initialize,
+            config.vars.clone(),
         ));
         let watchers = config.get_watchers();
         Self {

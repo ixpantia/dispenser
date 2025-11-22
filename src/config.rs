@@ -1,6 +1,8 @@
 use rayon::prelude::*;
+use serde::Serialize;
 
 use std::{
+    collections::HashMap,
     num::NonZeroU64,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -12,6 +14,27 @@ use crate::{
     instance::{Instance, Instances},
     manifests::DockerWatcher,
 };
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct DispenserVars {
+    pub inner: Arc<HashMap<String, String>>,
+}
+
+impl Clone for DispenserVars {
+    fn clone(&self) -> Self {
+        let inner = Arc::clone(&self.inner);
+        Self { inner }
+    }
+}
+
+impl Serialize for DispenserVars {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.inner.serialize(serializer)
+    }
+}
 
 pub struct ContposeConfig {
     pub delay: NonZeroU64,
@@ -52,6 +75,7 @@ pub struct ContposeInstanceConfig {
     /// - `Immediately` (default): The service is started as soon as the application starts.
     /// - `OnTrigger`: The service is started only when a trigger occurs (e.g., a cron schedule or a detected image update).
     pub initialize: Initialize,
+    pub vars: DispenserVars,
 }
 
 #[derive(Clone)]

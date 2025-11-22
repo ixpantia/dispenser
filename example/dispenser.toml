@@ -4,7 +4,7 @@ delay = 60
 path = "nginx"
 # This service will be started immediately on startup, which is the default behavior.
 # It will be updated if a new 'nginx:latest' image is detected.
-images = [{ registry = "{{docker_io}}", name = "nginx", tag = "latest" }]
+images = [{ registry = "${docker_io}", name = "nginx", tag = "latest" }]
 
 [[instance]]
 path = "hello-world"

@@ -172,7 +172,11 @@ In this example, the service defined in the `backup-service` directory will only
 
 ### Step 6: Using Variables (Optional)
 
-Dispenser supports using variables in your configuration file via `dispenser.vars`. This file allows you to define values that can be reused inside `dispenser.toml` using `{{ VARIABLE }}` syntax.
+Dispenser supports using variables in your configuration file via `dispenser.vars`. This file allows you to define values that can be reused inside `dispenser.toml` using `${VARIABLE}` syntax.
+
+**Note:** While Dispenser uses the `${}` syntax similar to Docker Compose, it does not support all [Docker Compose interpolation features](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/) (such as default values `:-` or error messages `:?`) within `dispenser.toml`.
+
+However, variables defined in `dispenser.vars` are passed as environment variables to the underlying `docker compose` commands. This allows you to use them in your `docker-compose.yaml` files, where full Docker Compose interpolation is supported.
 
 This is useful for reusing the same configuration in multiple deployments.
 
@@ -194,7 +198,18 @@ This is useful for reusing the same configuration in multiple deployments.
     ```toml
     [[instance]]
     path = "my-app"
-    images = [{ registry = "{{ registry_url }}", name = "my-org/my-app", tag = "{{ app_version }}" }]
+    images = [{ registry = "${registry_url}", name = "my-org/my-app", tag = "${app_version}" }]
+    ```
+
+4.  Use these variables in your `docker-compose.yaml`.
+
+    ```yaml
+    services:
+      my-app:
+        # You can use the variables defined in dispenser.vars here
+        image: ${registry_url}/my-org/my-app:${app_version}
+        ports:
+          - "8080:80"
     ```
 
 ### Step 7: Validating Configuration
@@ -219,8 +234,8 @@ If there's an error `dispenser` will show you a detailed error message.
    2 |
    3 | [[instance]]
    4 | path = "nginx"
-   5 > images = [{ registry = "{{ missing }}", name = "nginx", tag = "latest" }]
-     i                            ^^^^^^^ undefined value
+   5 > images = [{ registry = "${missing}", name = "nginx", tag = "latest" }]
+     i                         ^^^^^^^^^^ undefined value
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 No referenced variables
 -------------------------------------------------------------------------------

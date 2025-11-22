@@ -34,6 +34,8 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    log::info!("Dispenser running with PID: {}", std::process::id());
+
     if let Err(e) = rayon::ThreadPoolBuilder::new()
         .num_threads(NUM_THREADS)
         .build_global()
