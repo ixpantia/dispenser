@@ -13,26 +13,15 @@ use crate::{
     manifests::DockerWatcher,
 };
 
-#[derive(serde::Deserialize)]
 pub struct ContposeConfig {
     pub delay: NonZeroU64,
-    #[serde(default)]
-    pub instance: Vec<ContposeInstanceConfig>,
+    pub instances: Vec<ContposeInstanceConfig>,
 }
 
 impl ContposeConfig {
-    pub fn init() -> Self {
-        Self::try_init().unwrap()
-    }
-    pub fn try_init() -> Result<Self, Box<dyn std::error::Error>> {
-        use std::io::Read;
-        let mut config = String::new();
-        std::fs::File::open(&crate::cli::get_cli_args().config)?.read_to_string(&mut config)?;
-        Ok(toml::from_str(&config)?)
-    }
     pub fn get_instances(&self) -> Instances {
         let inner = self
-            .instance
+            .instances
             .par_iter()
             .with_max_len(1)
             .cloned()
@@ -45,42 +34,31 @@ impl ContposeConfig {
 }
 
 /// Defines when a service should be initialized.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Initialize {
     /// The service is started as soon as the application starts.
-    #[serde(alias = "immediately", alias = "Immediately")]
-    #[default]
     Immediately,
     /// The service is started only when a trigger occurs (e.g., a cron schedule or a detected image update).
-    #[serde(
-        alias = "on-trigger",
-        alias = "OnTrigger",
-        alias = "on_trigger",
-        alias = "on trigger"
-    )]
     OnTrigger,
 }
 
-#[derive(serde::Deserialize, Clone)]
+#[derive(Clone)]
 pub struct ContposeInstanceConfig {
     pub path: PathBuf,
-    #[serde(default)]
-    images: Vec<Image>,
-    #[serde(default)]
+    pub images: Vec<Image>,
     pub cron: Option<Schedule>,
     /// Defines when the service should be initialized.
     ///
     /// - `Immediately` (default): The service is started as soon as the application starts.
     /// - `OnTrigger`: The service is started only when a trigger occurs (e.g., a cron schedule or a detected image update).
-    #[serde(default)]
     pub initialize: Initialize,
 }
 
-#[derive(serde::Deserialize, Clone)]
-struct Image {
-    registry: String,
-    name: String,
-    tag: String,
+#[derive(Clone)]
+pub(crate) struct Image {
+    pub(crate) registry: String,
+    pub(crate) name: String,
+    pub(crate) tag: String,
 }
 
 impl ContposeInstanceConfig {

@@ -1,6 +1,6 @@
 # justfile for dispenser project
 
-DISPENSER_VERSION := "0.4"
+DISPENSER_VERSION := "0.5"
 TARGET_BIN := "target/x86_64-unknown-linux-musl/release/dispenser"
 USR_BIN_DEB := "deb/usr/local/bin/dispenser"
 USR_BIN_RPM := "rpm/usr/local/bin/dispenser"

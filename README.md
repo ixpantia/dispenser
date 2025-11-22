@@ -27,9 +27,9 @@ Download the latest `.deb` or `.rpm` package from the [releases page](https://gi
 
 ```sh
 # Download the .deb package
-# wget https://github.com/ixpantia/dispenser/releases/download/v0.3.0/dispenser-0.3-0.x86_64.deb
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.5.0/dispenser-0.5-0.x86_64.deb
 
-sudo apt install ./dispenser-0.3-0.x86_64.deb
+sudo apt install ./dispenser-0.5-0.x86_64.deb
 ```
 
 ### RHEL / CentOS / Fedora
@@ -38,7 +38,7 @@ sudo apt install ./dispenser-0.3-0.x86_64.deb
 # Download the .rpm package
 # wget ...
 
-sudo dnf install ./dispenser-0.3-0.x86_64.rpm
+sudo dnf install ./dispenser-0.5-0.x86_64.rpm
 ```
 
 The installation process will:
@@ -170,7 +170,63 @@ initialize = "on-trigger"
 ```
 In this example, the service defined in the `backup-service` directory will only be started when the cron schedule is met. After its first run, it will continue to be managed by its cron schedule.
 
-### Step 6: Start and Verify the Deployment
+### Step 6: Using Variables (Optional)
+
+Dispenser supports using variables in your configuration file via `dispenser.vars`. This file allows you to define values that can be reused inside `dispenser.toml` using `{{ VARIABLE }}` syntax.
+
+This is useful for reusing the same configuration in multiple deployments.
+
+1.  Create a `dispenser.vars` file in `/opt/dispenser`.
+
+    ```sh
+    vim dispenser.vars
+    ```
+
+2.  Define your variables in TOML format.
+
+    ```toml
+    registry_url = "ghcr.io"
+    app_version = "latest"
+    ```
+
+3.  Use these variables in your `dispenser.toml`.
+
+    ```toml
+    [[instance]]
+    path = "my-app"
+    images = [{ registry = "{{ registry_url }}", name = "my-org/my-app", tag = "{{ app_version }}" }]
+    ```
+
+### Step 7: Validating Configuration
+
+Before applying changes, you can validate your configuration files (including variable substitution) to ensure there are no syntax errors or missing variables.
+
+Run dispenser with the `--test` (or `-t`) flag:
+
+```sh
+dispenser --test
+```
+
+If the configuration is valid, it will output:
+```
+Dispenser config is ok.
+```
+
+If there's an error `dispenser` will show you a detailed error message.
+
+```
+---------------------------------- <string> -----------------------------------
+   2 |
+   3 | [[instance]]
+   4 | path = "nginx"
+   5 > images = [{ registry = "{{ missing }}", name = "nginx", tag = "latest" }]
+     i                            ^^^^^^^ undefined value
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+No referenced variables
+-------------------------------------------------------------------------------
+```
+
+### Step 8: Start and Verify the Deployment
 
 1.  Exit the `dispenser` user session to return to your regular user.
     ```sh
