@@ -9,6 +9,13 @@ pub struct Args {
     /// Path to the config file.
     #[arg(short, long, default_value = "dispenser.toml")]
     pub config: PathBuf,
+    /// Path to the vars file.
+    #[arg(short, long, default_value = "dispenser.vars")]
+    pub vars: PathBuf,
+
+    /// Test the configuration file and exit.
+    #[arg(short, long)]
+    pub test: bool,
 }
 
 static ARGS: OnceLock<Args> = OnceLock::new();

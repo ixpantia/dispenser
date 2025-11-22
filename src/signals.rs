@@ -1,5 +1,6 @@
+use crate::config_file::DispenserConfigFile;
+use crate::instance::Instances;
 use crate::master::MasterMsg;
-use crate::{config::ContposeConfig, instance::Instances};
 use signal_hook::{
     consts::{SIGHUP, SIGINT},
     iterator::Signals,
@@ -9,7 +10,8 @@ use std::sync::{Arc, Mutex};
 /// What should we do when the user stops
 /// this program?
 pub fn handle_sigint(instances: Arc<Mutex<Instances>>) {
-    let mut signals = Signals::new([SIGINT]).expect("No signals :(");
+    let mut signals =
+        Signals::new([SIGINT]).expect("No signals :(. This really should never happen");
 
     std::thread::spawn(move || {
         signals.forever().for_each(|_| {
@@ -46,10 +48,9 @@ pub fn handle_reload(instances: Arc<Mutex<Instances>>) {
     std::thread::spawn(move || {
         for _ in signals.forever() {
             let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Reloading]);
-            // Read the config again
-            let new_config = ContposeConfig::try_init();
 
-            match new_config {
+            // Read the config again
+            match DispenserConfigFile::try_init().map(DispenserConfigFile::into_config) {
                 Ok(new_config) => {
                     // Check if there are any paths that were deleted
                     let current_instances = instances.lock().expect("Unable to lock").clone();
@@ -61,7 +62,7 @@ pub fn handle_reload(instances: Arc<Mutex<Instances>>) {
                         // Is the new config does not include the current instance we
                         // send a message to stop
                         if !new_config
-                            .instance
+                            .instances
                             .iter()
                             .any(|inst| inst.path == curr_instance.config.path)
                         {
@@ -87,7 +88,8 @@ pub fn handle_reload(instances: Arc<Mutex<Instances>>) {
                     *instances = new_config.get_instances();
                 }
                 Err(err) => log::error!("Unable to read new config: {err}"),
-            }
+            };
+
             let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
         }
     });
