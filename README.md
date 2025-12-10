@@ -27,9 +27,9 @@ Download the latest `.deb` or `.rpm` package from the [releases page](https://gi
 
 ```sh
 # Download the .deb package
-# wget https://github.com/ixpantia/dispenser/releases/download/v0.5.0/dispenser-0.5-0.x86_64.deb
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.6.0/dispenser-0.6-0.x86_64.deb
 
-sudo apt install ./dispenser-0.5-0.x86_64.deb
+sudo apt install ./dispenser-0.6-0.x86_64.deb
 ```
 
 ### RHEL / CentOS / Fedora
@@ -38,7 +38,7 @@ sudo apt install ./dispenser-0.5-0.x86_64.deb
 # Download the .rpm package
 # wget ...
 
-sudo dnf install ./dispenser-0.5-0.x86_64.rpm
+sudo dnf install ./dispenser-0.6-0.x86_64.rpm
 ```
 
 The installation process will:

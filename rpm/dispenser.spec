@@ -1,5 +1,5 @@
 Name: dispenser
-Version: 0.5
+Version: 0.6
 Release: 0
 Summary: Continously Deploy services with Docker Compose
 License: see /usr/share/doc/dispenser/copyright
