@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::OnceLock};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 /// Continuous delivery for un-complicated infrastructure.
 #[derive(Parser, Debug)]
@@ -16,6 +16,29 @@ pub struct Args {
     /// Test the configuration file and exit.
     #[arg(short, long)]
     pub test: bool,
+
+    /// Path to the pid file
+    #[arg(short, long, default_value = "dispenser.pid")]
+    pub pid_file: PathBuf,
+
+    /// Send a signal to the running dispenser instance
+    #[arg(short, long)]
+    pub signal: Option<Signal>,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum Signal {
+    Reload,
+    Stop,
+}
+
+impl From<Signal> for nix::sys::signal::Signal {
+    fn from(signal: Signal) -> Self {
+        match signal {
+            Signal::Reload => nix::sys::signal::Signal::SIGHUP,
+            Signal::Stop => nix::sys::signal::Signal::SIGINT,
+        }
+    }
 }
 
 static ARGS: OnceLock<Args> = OnceLock::new();

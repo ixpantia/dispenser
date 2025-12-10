@@ -269,6 +269,30 @@ No referenced variables
 
 From now on, whenever you push a new image to your registry with the `latest` tag, Dispenser will automatically detect it, pull the new version, and redeploy your service with zero downtime.
 
+### Managing the Service with CLI Signals
+
+Dispenser includes a built-in mechanism to send signals to the running daemon using the `-s` or `--signal` flag. This allows you to reload the configuration or stop the service without needing to use `kill` manually.
+
+**Note:** This command relies on the `dispenser.pid` file, so you should run it from the same directory where Dispenser is running (typically `/opt/dispenser` for the default installation).
+
+**Reload Configuration:**
+
+To reload the `dispenser.toml` configuration without restarting the process:
+
+```sh
+dispenser -s reload
+```
+
+This is useful for adding new instances or changing configuration parameters without interrupting currently monitored services.
+
+**Stop Service:**
+
+To gracefully stop the Dispenser daemon:
+
+```sh
+dispenser -s stop
+```
+
 ## Building from Source
 
 ### RPM (RHEL)

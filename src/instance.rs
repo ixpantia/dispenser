@@ -8,7 +8,7 @@ use crate::master::{Action, DockerComposeMaster, MasterMsg};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Instances {
     pub inner: Vec<Arc<Mutex<Instance>>>,
     pub delay: std::time::Duration,
