@@ -5,7 +5,8 @@ use signal_hook::{
     consts::{SIGHUP, SIGINT},
     iterator::Signals,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// What should we do when the user stops
 /// this program?
@@ -17,24 +18,22 @@ pub fn handle_sigint(instances: Arc<Mutex<Instances>>) {
         signals.forever().for_each(|_| {
             let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
             // Check if there are any paths that were deleted
-            let current_instances = instances.lock().expect("Unable to lock").clone();
+            let current_instances = instances.blocking_lock().clone();
 
             for curr_instance in &current_instances.inner {
                 curr_instance
-                    .lock()
-                    .expect("Lock Poissoned. Please report this bug.")
+                    .blocking_lock()
                     .master
                     .send_msg(MasterMsg::Stop);
             }
 
             // Wait until all current instances are stopped or detached
             loop {
-                if current_instances.inner.iter().all(|inst| {
-                    inst.lock()
-                        .expect("Lock Poissoned. Please Report")
-                        .master
-                        .is_stopped()
-                }) {
+                if current_instances
+                    .inner
+                    .iter()
+                    .all(|inst| inst.blocking_lock().master.is_stopped())
+                {
                     std::process::exit(0);
                 }
             }
@@ -45,20 +44,18 @@ pub fn handle_sigint(instances: Arc<Mutex<Instances>>) {
 pub fn handle_reload(instances: Arc<Mutex<Instances>>) {
     let mut signals = Signals::new([SIGHUP]).expect("No signals :(");
 
-    std::thread::spawn(move || {
+    tokio::spawn(async move {
         for _ in signals.forever() {
             let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Reloading]);
-
             // Read the config again
-            match DispenserConfigFile::try_init().map(DispenserConfigFile::into_config) {
+            match DispenserConfigFile::try_init().await {
                 Ok(new_config) => {
+                    let new_config = DispenserConfigFile::into_config(new_config).await;
                     // Check if there are any paths that were deleted
-                    let current_instances = instances.lock().expect("Unable to lock").clone();
+                    let current_instances = instances.lock().await.clone();
 
                     for curr_instance in &current_instances.inner {
-                        let curr_instance = curr_instance
-                            .lock()
-                            .expect("Poissoned Lock. Please report this bug!");
+                        let curr_instance = curr_instance.lock().await;
                         // Is the new config does not include the current instance we
                         // send a message to stop
                         if !new_config
@@ -74,18 +71,17 @@ pub fn handle_reload(instances: Arc<Mutex<Instances>>) {
 
                     // Wait until all current instances are stopped or detached
                     loop {
-                        if current_instances.inner.iter().all(|inst| {
-                            inst.lock()
-                                .expect("Lock Poissoned, please report this bug.")
-                                .master
-                                .is_stopped()
-                        }) {
+                        if current_instances
+                            .inner
+                            .iter()
+                            .all(|inst| inst.blocking_lock().master.is_stopped())
+                        {
                             break;
                         }
                     }
 
-                    let mut instances = instances.lock().expect("Unable to lock");
-                    *instances = new_config.get_instances();
+                    let mut instances = instances.lock().await;
+                    *instances = new_config.get_instances().await;
                 }
                 Err(err) => log::error!("Unable to read new config: {err}"),
             };

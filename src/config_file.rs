@@ -1,14 +1,36 @@
 use minijinja::Environment;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use std::{collections::HashMap, num::NonZeroU64, path::PathBuf, sync::Arc};
 
 use cron::Schedule;
 
+use crate::secrets;
+
+fn default_gcp_secret_version() -> String {
+    "latest".to_string()
+}
+
+#[derive(Debug, serde::Deserialize, Clone)]
+#[serde(tag = "source", rename_all = "snake_case")]
+enum Secret {
+    Google {
+        name: String,
+        #[serde(default = "default_gcp_secret_version")]
+        version: String,
+    },
+}
+
+#[derive(Debug, serde::Deserialize, Clone)]
+#[serde(untagged)]
+enum DispenserVarEntry {
+    Raw(String),
+    Secret(Secret),
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct DispenserVars {
-    inner: HashMap<String, String>,
+    inner: HashMap<String, DispenserVarEntry>,
 }
 
 impl<'de> Deserialize<'de> for DispenserVars {
@@ -21,7 +43,37 @@ impl<'de> Deserialize<'de> for DispenserVars {
     }
 }
 
-impl Serialize for DispenserVars {
+impl DispenserVars {
+    async fn materialize(self) -> DispenserVarsMaterialized {
+        let mut inner = HashMap::new();
+        for (key, entry) in self.inner {
+            let value = match entry {
+                DispenserVarEntry::Raw(s) => s,
+                DispenserVarEntry::Secret(secret) => match secret {
+                    Secret::Google { name, version } => {
+                        secrets::gcp::fetch_secret(&name, &version).await
+                    }
+                },
+            };
+            inner.insert(key, value);
+        }
+        DispenserVarsMaterialized { inner }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct DispenserVarsMaterialized {
+    inner: HashMap<String, String>,
+}
+
+impl DispenserVarsMaterialized {
+    async fn try_init() -> Result<Self, DispenserConfigError> {
+        let vars_raw = DispenserVars::try_init()?;
+        Ok(vars_raw.materialize().await)
+    }
+}
+
+impl Serialize for DispenserVarsMaterialized {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -57,9 +109,9 @@ pub struct DispenserConfigFileSerde {
 
 #[derive(Debug)]
 pub struct DispenserConfigFile {
-    pub delay: NonZeroU64,
-    pub instance: Vec<DispenserInstanceConfigEntry>,
-    pub vars: DispenserVars,
+    delay: NonZeroU64,
+    instance: Vec<DispenserInstanceConfigEntry>,
+    vars: DispenserVarsMaterialized,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,7 +127,7 @@ pub enum DispenserConfigError {
 impl DispenserConfigFile {
     fn try_init_from_string(
         mut config: String,
-        vars: DispenserVars,
+        vars: DispenserVarsMaterialized,
     ) -> Result<Self, DispenserConfigError> {
         let mut env = Environment::new();
 
@@ -98,12 +150,12 @@ impl DispenserConfigFile {
             vars,
         })
     }
-    pub fn try_init() -> Result<Self, DispenserConfigError> {
+    pub async fn try_init() -> Result<Self, DispenserConfigError> {
         use std::io::Read;
         let mut config = String::new();
         std::fs::File::open(&crate::cli::get_cli_args().config)?.read_to_string(&mut config)?;
         // Use handle vars to replace strings with handlevars
-        let vars = DispenserVars::try_init()?;
+        let vars = DispenserVarsMaterialized::try_init().await?;
 
         Self::try_init_from_string(config, vars)
     }
@@ -158,13 +210,13 @@ struct Image {
 }
 
 impl DispenserConfigFile {
-    pub fn into_config(self) -> crate::config::ContposeConfig {
+    pub async fn into_config(self) -> crate::config::ContposeConfig {
         let vars = crate::config::DispenserVars {
             inner: Arc::new(self.vars.inner),
         };
         let instances = self
             .instance
-            .into_par_iter()
+            .into_iter()
             .map(|instance| crate::config::ContposeInstanceConfig {
                 path: instance.path,
                 images: instance
@@ -201,18 +253,25 @@ mod tests {
             var2 = "value2"
         "#;
         let vars = DispenserVars::try_init_from_string(input).expect("Failed to parse vars");
-        assert_eq!(vars.inner.get("var1").map(|s| s.as_str()), Some("value1"));
-        assert_eq!(vars.inner.get("var2").map(|s| s.as_str()), Some("value2"));
+        let get_val = |k| match vars.inner.get(k) {
+            Some(DispenserVarEntry::Raw(s)) => Some(s.as_str()),
+            _ => None,
+        };
+        assert_eq!(get_val("var1"), Some("value1"));
+        assert_eq!(get_val("var2"), Some("value2"));
     }
 
-    #[test]
-    fn test_config_loading_with_templates() {
+    #[tokio::test]
+    async fn test_config_loading_with_templates() {
         let vars_input = r#"
             delay_ms = "500"
             base_path = "/app"
             img_version = "1.2.3"
         "#;
-        let vars = DispenserVars::try_init_from_string(vars_input).unwrap();
+        let vars = DispenserVars::try_init_from_string(vars_input)
+            .unwrap()
+            .materialize()
+            .await;
 
         let config_input = r#"
             delay = ${ delay_ms }
@@ -242,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_initialization_modes() {
-        let vars = DispenserVars {
+        let vars = DispenserVarsMaterialized {
             inner: HashMap::new(),
         };
 
@@ -284,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_template_failure() {
-        let vars = DispenserVars {
+        let vars = DispenserVarsMaterialized {
             inner: HashMap::new(),
         };
         let config = r#"

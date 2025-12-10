@@ -1,10 +1,12 @@
 use chrono::{DateTime, Local};
 use cron::Schedule;
+use futures_util::future;
 
 use crate::config::ContposeInstanceConfig;
 use crate::manifests::{DockerWatcher, DockerWatcherStatus};
 use crate::master::{Action, DockerComposeMaster, MasterMsg};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct Instances {
@@ -27,7 +29,7 @@ impl CronWatcher {
         match self.next {
             Some(next) if chrono::Local::now() >= next => {
                 self.next = self.schedule.upcoming(Local).next();
-                return true;
+                true
             }
             Some(_) | None => false,
         }
@@ -42,7 +44,7 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn new(config: ContposeInstanceConfig) -> Self {
+    pub async fn new(config: ContposeInstanceConfig) -> Self {
         // Create a docker-compose master.
         // This represents a process that manages
         // when docker compose is lifted or destroyed
@@ -52,7 +54,7 @@ impl Instance {
             config.initialize,
             config.vars.clone(),
         ));
-        let watchers = config.get_watchers();
+        let watchers = config.get_watchers().await;
         Self {
             master,
             config,
@@ -60,7 +62,7 @@ impl Instance {
             cron_watcher,
         }
     }
-    pub fn poll(&mut self, poll_images: bool) {
+    pub async fn poll(&mut self, poll_images: bool) {
         // If uses cron
         if let Some(cron_watcher) = &mut self.cron_watcher {
             if cron_watcher.is_ready() {
@@ -79,10 +81,11 @@ impl Instance {
         if poll_images {
             // try to update the watchers and check
             // if any of them were updated
-            let any_updated = self
-                .watchers
-                .iter()
-                .any(|img| matches!(img.update(), DockerWatcherStatus::Updated));
+            let update_futures = self.watchers.iter().map(|img| img.update());
+            let updates = future::join_all(update_futures).await;
+            let any_updated = updates
+                .into_iter()
+                .any(|status| matches!(status, DockerWatcherStatus::Updated));
 
             // If any of the watchers were updated then we
             // send a message to the master to update

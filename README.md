@@ -193,6 +193,8 @@ This is useful for reusing the same configuration in multiple deployments.
     app_version = "latest"
     ```
 
+    Dispenser also supports fetching secrets from Google Secret Manager. For more details on configuring secrets, see the [GCP secrets documentation](GCP.md).
+
 3.  Use these variables in your `dispenser.toml`.
 
     ```toml

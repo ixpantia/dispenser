@@ -1,12 +1,8 @@
-use rayon::prelude::*;
+use futures_util::future;
 use serde::Serialize;
 
-use std::{
-    collections::HashMap,
-    num::NonZeroU64,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, num::NonZeroU64, path::PathBuf, sync::Arc};
+use tokio::sync::Mutex;
 
 use cron::Schedule;
 
@@ -42,14 +38,14 @@ pub struct ContposeConfig {
 }
 
 impl ContposeConfig {
-    pub fn get_instances(&self) -> Instances {
-        let inner = self
+    pub async fn get_instances(&self) -> Instances {
+        let inner_futures = self
             .instances
-            .par_iter()
-            .with_max_len(1)
+            .iter()
             .cloned()
-            .map(|instance| Arc::new(Mutex::new(Instance::new(instance))))
-            .collect::<Vec<_>>();
+            .map(|instance| async { Arc::new(Mutex::new(Instance::new(instance).await)) });
+
+        let inner = future::join_all(inner_futures).await;
 
         let delay = std::time::Duration::from_secs(self.delay.get());
         Instances { inner, delay }
@@ -86,10 +82,11 @@ pub(crate) struct Image {
 }
 
 impl ContposeInstanceConfig {
-    pub fn get_watchers(&self) -> Vec<DockerWatcher> {
-        self.images
+    pub async fn get_watchers(&self) -> Vec<DockerWatcher> {
+        let initialize_futures = self
+            .images
             .iter()
-            .map(|image| DockerWatcher::initialize(&image.registry, &image.name, &image.tag))
-            .collect()
+            .map(|image| DockerWatcher::initialize(&image.registry, &image.name, &image.tag));
+        future::join_all(initialize_futures).await
     }
 }

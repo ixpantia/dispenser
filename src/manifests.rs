@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::{process::Command, sync::Mutex};
 
 use thiserror::Error;
 
@@ -100,15 +101,17 @@ pub enum DockerWatcherStatus {
 }
 
 impl DockerWatcher {
-    pub fn initialize(registry: &str, image: &str, tag: &str) -> Self {
+    pub async fn initialize(registry: &str, image: &str, tag: &str) -> Self {
         log::info!("Initializing watch for {registry}/{image}:{tag}");
-        let last_digest = Arc::new(Mutex::new(match get_latest_digest(registry, image, tag) {
-            Ok(digest) => Some(digest),
-            Err(e) => {
-                log::warn!("{e}");
-                None
-            }
-        }));
+        let last_digest = Arc::new(Mutex::new(
+            match get_latest_digest(registry, image, tag).await {
+                Ok(digest) => Some(digest),
+                Err(e) => {
+                    log::warn!("{e}");
+                    None
+                }
+            },
+        ));
 
         let registry = registry.into();
         let image = image.into();
@@ -120,9 +123,9 @@ impl DockerWatcher {
             tag,
         }
     }
-    pub fn update(&self) -> DockerWatcherStatus {
-        let last_digest = *self.last_digest.lock().expect("Unable to lock mutex");
-        let new_sha256 = get_latest_digest(&self.registry, &self.image, &self.tag);
+    pub async fn update(&self) -> DockerWatcherStatus {
+        let last_digest = *self.last_digest.lock().await;
+        let new_sha256 = get_latest_digest(&self.registry, &self.image, &self.tag).await;
         match new_sha256 {
             Err(e) => {
                 log::warn!("{e}");
@@ -130,7 +133,7 @@ impl DockerWatcher {
             }
             Ok(new_sha256) if last_digest == Some(new_sha256) => DockerWatcherStatus::NotUpdated,
             Ok(new_sha256) => {
-                let mut last_digest = self.last_digest.lock().expect("Unable to lock mutex");
+                let mut last_digest = self.last_digest.lock().await;
                 *last_digest = Some(new_sha256);
                 log::info!(
                     "Found a new version for {}:{}, update will start soon...",
@@ -143,11 +146,12 @@ impl DockerWatcher {
     }
 }
 
-fn get_latest_digest(registry: &str, image: &str, tag: &str) -> Result<Sha256> {
-    let output_result = std::process::Command::new("docker")
+async fn get_latest_digest(registry: &str, image: &str, tag: &str) -> Result<Sha256> {
+    let output_result = Command::new("docker")
         .args(["manifest", "inspect"])
         .arg(format!("{registry}/{image}:{tag}"))
-        .output()?;
+        .output()
+        .await?;
     let val: DockerManifestsResponse = serde_json::from_slice(&output_result.stdout)?;
     val.get_digest("amd64", "linux")
 }
