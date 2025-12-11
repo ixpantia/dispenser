@@ -11,7 +11,7 @@ To use this feature, the environment where Dispenser is running (e.g., a Google 
 
 ## Configuration
 
-You can define secrets in your `dispenser.vars` file. Instead of a plain string value, use a table to specify the secret source and details.
+You can define secrets in your `dispenser.vars` file (or any `*.dispenser.vars` file). Instead of a plain string value, use a table to specify the secret source and details.
 
 ### Syntax
 
@@ -27,7 +27,7 @@ variable_name = { source = "google", name = "projects/PROJECT_ID/secrets/SECRET_
 
 Suppose you have a secret stored in Google Secret Manager that contains an OAuth Client ID.
 
-**1. Define the secret in `dispenser.vars`:**
+**1. Define the secret in `dispenser.vars` (or `*.dispenser.vars`):**
 
 ```toml
 # dispenser.vars

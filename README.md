@@ -172,15 +172,15 @@ In this example, the service defined in the `backup-service` directory will only
 
 ### Step 6: Using Variables (Optional)
 
-Dispenser supports using variables in your configuration file via `dispenser.vars`. This file allows you to define values that can be reused inside `dispenser.toml` using `${VARIABLE}` syntax.
+Dispenser supports using variables in your configuration file via `dispenser.vars` or any file ending in `.dispenser.vars`. These files allow you to define values that can be reused inside `dispenser.toml` using `${VARIABLE}` syntax.
 
 **Note:** While Dispenser uses the `${}` syntax similar to Docker Compose, it does not support all [Docker Compose interpolation features](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/) (such as default values `:-` or error messages `:?`) within `dispenser.toml`.
 
-However, variables defined in `dispenser.vars` are passed as environment variables to the underlying `docker compose` commands. This allows you to use them in your `docker-compose.yaml` files, where full Docker Compose interpolation is supported.
+However, variables defined in these variable files are passed as environment variables to the underlying `docker compose` commands. This allows you to use them in your `docker-compose.yaml` files, where full Docker Compose interpolation is supported.
 
 This is useful for reusing the same configuration in multiple deployments.
 
-1.  Create a `dispenser.vars` file in `/opt/dispenser`.
+1.  Create a `dispenser.vars` file (or `*.dispenser.vars`) in `/opt/dispenser`.
 
     ```sh
     vim dispenser.vars

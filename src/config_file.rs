@@ -1,7 +1,12 @@
 use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 
-use std::{collections::HashMap, num::NonZeroU64, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    num::NonZeroU64,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use cron::Schedule;
 
@@ -82,21 +87,68 @@ impl Serialize for DispenserVarsMaterialized {
     }
 }
 
+/// Files that match dispenser.vars | *.dispenser.vars
+/// Sorted
+fn list_vars_files() -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let cli_args = crate::cli::get_cli_args();
+
+    let search_dir = cli_args.config.parent().map_or(Path::new("."), |p| {
+        if p.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            p
+        }
+    });
+    if let Ok(entries) = std::fs::read_dir(search_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                    if file_name == "dispenser.vars" || file_name.ends_with(".dispenser.vars") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    files.sort(); // Sort the paths alphabetically
+    files
+}
+
 impl DispenserVars {
     fn try_init_from_string(val: &str) -> Result<Self, DispenserConfigError> {
         Ok(toml::from_str(val)?)
     }
+    fn combine(vars: Vec<Self>) -> Self {
+        let mut combined_inner = HashMap::new();
+        vars.into_iter().for_each(|var_set| {
+            combined_inner.extend(var_set.inner);
+        });
+        Self {
+            inner: combined_inner,
+        }
+    }
     fn try_init() -> Result<Self, DispenserConfigError> {
         use std::io::Read;
-        match std::fs::File::open(&crate::cli::get_cli_args().vars) {
-            Ok(mut file) => {
-                let mut vars = String::new();
-                file.read_to_string(&mut vars)?;
-                Self::try_init_from_string(&vars)
+        let mut vars = Vec::new();
+        let vars_files = list_vars_files();
+        for vars_file in vars_files {
+            match std::fs::File::open(vars_file) {
+                Ok(mut file) => {
+                    let mut this_vars = String::new();
+                    file.read_to_string(&mut this_vars)?;
+                    match Self::try_init_from_string(&this_vars) {
+                        Ok(this_vars) => vars.push(this_vars),
+                        Err(e) => log::error!("Error parsing vars file: {e}"),
+                    }
+                }
+                Err(e) => log::error!("Error reading vars file: {e}"),
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e.into()),
         }
+
+        Ok(Self::combine(vars))
     }
 }
 
