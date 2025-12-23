@@ -1,0 +1,33 @@
+# Service configuration for nginx
+
+# Service metadata (required)
+[service]
+name = "nginx-service"
+image = "${docker_io}/nginx:latest"
+# Optional: Resource limits
+memory = "256m"  # Memory limit (e.g., "512m", "1g", "2g")
+cpus = "1.0"     # CPU limit (e.g., "0.5", "1.0", "2.0")
+
+# Port mappings (optional)
+[[port]]
+host = 8080
+container = 80
+
+[[volume]]
+source = "./html"
+target = "/usr/share/nginx/html"
+
+[[network]]
+name = "dispenser-net"
+
+
+# Restart policy (optional, defaults to "No")
+restart = "always"
+
+# Dispenser-specific configuration (required)
+[dispenser]
+# Watch for image updates
+watch = true
+
+# Initialize immediately on startup (default behavior)
+initialize = "immediately"

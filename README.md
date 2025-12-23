@@ -1,19 +1,22 @@
 # Dispenser
 
-This tool manages applications defined in Docker Compose by continuously
-monitoring your artifact registry for new versions of Docker images. When
-updates are detected, dispenser automatically deploys the new versions of your
-services with zero downtime, updating the running containers on the host
-machine.
+This tool manages containerized applications by continuously monitoring your artifact registry for new versions of Docker images. When updates are detected, dispenser automatically deploys the new versions of your services with zero downtime, updating the running containers on the host machine.
 
-dispenser operates as a daemon that runs in the background on the host server
-that watches your artifact registry, detecting when new versions of your
-container images are published.
+dispenser operates as a daemon that runs in the background on the host server that watches your artifact registry, detecting when new versions of your container images are published.
+
+## Documentation
+
+- **[CLI Reference](CLI.md)** - Complete command-line options and usage
+- **[Service Configuration](SERVICE_CONFIG.md)** - Detailed `service.toml` reference
+- **[Network Configuration](NETWORKS.md)** - Docker network setup guide
+- **[Cron Scheduling](CRON.md)** - Scheduled deployments
+- **[GCP Secrets](GCP.md)** - Google Secret Manager integration
+- **[Migration Guide](MIGRATION_GUIDE.md)** - Migrating from Docker Compose
 
 ## Prerequisites
 
 Before installing Dispenser, ensure the following are installed on your server:
-- **Docker Engine and Docker Compose**: Dispenser orchestrates Docker Compose deployments.
+- **Docker Engine**: Dispenser orchestrates Docker container deployments.
   - [Install Docker Engine on Debian](https://docs.docker.com/engine/install/debian/)
   - [Install Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
   - [Install Docker Engine on RHEL/CentOS](https://docs.docker.com/engine/install/rhel/)
@@ -27,9 +30,9 @@ Download the latest `.deb` or `.rpm` package from the [releases page](https://gi
 
 ```sh
 # Download the .deb package
-# wget https://github.com/ixpantia/dispenser/releases/download/v0.6.0/dispenser-0.6-0.x86_64.deb
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.7.0/dispenser-0.7-0.x86_64.deb
 
-sudo apt install ./dispenser-0.6-0.x86_64.deb
+sudo apt install ./dispenser-0.7-0.x86_64.deb
 ```
 
 ### RHEL / CentOS / Fedora
@@ -38,7 +41,7 @@ sudo apt install ./dispenser-0.6-0.x86_64.deb
 # Download the .rpm package
 # wget ...
 
-sudo dnf install ./dispenser-0.6-0.x86_64.rpm
+sudo dnf install ./dispenser-0.7-0.x86_64.rpm
 ```
 
 The installation process will:
@@ -77,7 +80,7 @@ Docker will securely store the credentials in the `dispenser` user's home direct
 
 ### Step 3: Prepare Your Application Directory
 
-Dispenser deploys applications based on a `docker-compose.yaml` file.
+Dispenser deploys applications based on a `service.toml` file.
 
 1.  Create a directory for your application inside `/opt/dispenser`. Let's call it `my-app`.
 
@@ -86,36 +89,45 @@ Dispenser deploys applications based on a `docker-compose.yaml` file.
     cd my-app
     ```
 
-2.  Create a `docker-compose.yaml` file that defines your service.
+2.  Create a `service.toml` file that defines your service.
 
     ```sh
-    vim docker-compose.yaml
+    vim service.toml
     ```
 
-    Paste your service definition. Note that the image points to the `:latest` tag, which Dispenser will monitor.
+    Paste your service definition. Here's a basic example:
 
-    ```yaml
-    services:
-      my-app:
-        image: ghcr.io/my-org/my-app:latest
-        ports:
-          - "8080:80"
-        env_file: .env
+    ```toml
+    # Service metadata (required)
+    [service]
+    name = "my-app"
+    image = "ghcr.io/my-org/my-app:latest"
+    
+    # Port mappings (optional)
+    [[port]]
+    host = 8080
+    container = 80
+    
+    # Environment variables (optional)
+    [env]
+    DATABASE_URL = "postgres://user:password@host:port/db"
+    API_KEY = "your_secret_api_key"
+    
+    # Restart policy (optional, defaults to "no")
+    restart = "always"
+    
+    # Dispenser-specific configuration (required)
+    [dispenser]
+    # Watch for image updates
+    watch = true
+    
+    # Initialize immediately on startup
+    initialize = "immediately"
     ```
 
-3.  (Optional) Create an `.env` file for your application's environment variables.
+### Step 4: Configure Dispenser to Monitor Your Service
 
-    ```sh
-    vim .env
-    ```
-    ```
-    DATABASE_URL=postgres://user:password@host:port/db
-    API_KEY=your_secret_api_key
-    ```
-
-### Step 4: Configure Dispenser to Watch Your Image
-
-Now, tell Dispenser to monitor your image for updates.
+Now, tell Dispenser about your service so it can monitor it for updates.
 
 1.  Return to the `dispenser` home directory and edit the configuration file.
 
@@ -124,23 +136,22 @@ Now, tell Dispenser to monitor your image for updates.
     vim dispenser.toml
     ```
 
-2.  Add an `[[instance]]` block to the file. This tells Dispenser where your application is and which image to watch.
+2.  Add a `[[service]]` block to the file. This tells Dispenser where your application is located.
 
     ```toml
     # How often to check for new images, in seconds.
     delay = 60
 
-    [[instance]]
+    [[service]]
     # Path is relative to /opt/dispenser
     path = "my-app"
-    images = [{ registry = "ghcr.io", name = "my-org/my-app", tag = "latest" }]
     ```
 
     Dispenser also supports scheduled deployments using `cron` expressions. For more details on configuring periodic restarts, see the [cron documentation](CRON.md).
 
 ### Step 5: Service Initialization (Optional)
 
-By default, Dispenser starts services as soon as the application launches. However, you can control this behavior using the `initialize` option in your `dispenser.toml` file. This is particularly useful for services that should only run on a specific schedule.
+By default, Dispenser starts services as soon as the application launches. However, you can control this behavior using the `initialize` option in your service's `service.toml` file. This is particularly useful for services that should only run on a specific schedule.
 
 The `initialize` option can be set to one of two values:
 
@@ -149,34 +160,52 @@ The `initialize` option can be set to one of two values:
 
 #### Example: Immediate Initialization
 
-This is the default behavior. The following configuration will start the `my-app` service immediately.
+This is the default behavior. The following configuration will start the service immediately.
 
 ```toml
-[[instance]]
-path = "my-app"
-images = [{ registry = "ghcr.io", name = "my-org/my-app", tag = "latest" }]
-# initialize = "immediately" # This line is optional
+# my-app/service.toml
+[service]
+name = "my-app"
+image = "ghcr.io/my-org/my-app:latest"
+
+[[port]]
+host = 8080
+container = 80
+
+[dispenser]
+watch = true
+initialize = "immediately"  # This is the default
 ```
 
 #### Example: Initialization on Trigger
 
-This configuration is useful for scheduled tasks. The `backup-service` will not start immediately. Instead, it will be triggered to run based on the cron schedule.
+This configuration is useful for scheduled tasks. The service will not start immediately. Instead, it will be triggered to run based on the cron schedule.
 
 ```toml
-[[instance]]
-path = "backup-service"
-cron = "0 3 * * *" # Run every day at 3 AM
+# backup-service/service.toml
+[service]
+name = "backup-job"
+image = "ghcr.io/my-org/backup:latest"
+
+[[volume]]
+source = "./backups"
+target = "/backups"
+
+[dispenser]
+watch = false
 initialize = "on-trigger"
+cron = "0 3 * * *"  # Run every day at 3 AM
 ```
+
 In this example, the service defined in the `backup-service` directory will only be started when the cron schedule is met. After its first run, it will continue to be managed by its cron schedule.
 
 ### Step 6: Using Variables (Optional)
 
-Dispenser supports using variables in your configuration file via `dispenser.vars` or any file ending in `.dispenser.vars`. These files allow you to define values that can be reused inside `dispenser.toml` using `${VARIABLE}` syntax.
+Dispenser supports using variables in your configuration files via `dispenser.vars` or any file ending in `.dispenser.vars`. These files allow you to define values that can be reused inside `dispenser.toml` and `service.toml` files using `${VARIABLE}` syntax.
 
-**Note:** While Dispenser uses the `${}` syntax similar to Docker Compose, it does not support all [Docker Compose interpolation features](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/) (such as default values `:-` or error messages `:?`) within `dispenser.toml`.
+**Note:** While Dispenser uses the `${}` syntax similar to Docker Compose, it does not support all [Docker Compose interpolation features](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/) (such as default values `:-` or error messages `:?`).
 
-However, variables defined in these variable files are passed as environment variables to the underlying `docker compose` commands. This allows you to use them in your `docker-compose.yaml` files, where full Docker Compose interpolation is supported.
+Variables defined in these files are substituted directly into your configuration files during loading.
 
 This is useful for reusing the same configuration in multiple deployments.
 
@@ -191,6 +220,7 @@ This is useful for reusing the same configuration in multiple deployments.
     ```toml
     registry_url = "ghcr.io"
     app_version = "latest"
+    org_name = "my-org"
     ```
 
     Dispenser also supports fetching secrets from Google Secret Manager. For more details on configuring secrets, see the [GCP secrets documentation](GCP.md).
@@ -198,23 +228,138 @@ This is useful for reusing the same configuration in multiple deployments.
 3.  Use these variables in your `dispenser.toml`.
 
     ```toml
-    [[instance]]
+    delay = 60
+    
+    [[service]]
     path = "my-app"
-    images = [{ registry = "${registry_url}", name = "my-org/my-app", tag = "${app_version}" }]
     ```
 
-4.  Use these variables in your `docker-compose.yaml`.
+4.  Use these variables in your `service.toml`.
 
-    ```yaml
-    services:
-      my-app:
-        # You can use the variables defined in dispenser.vars here
-        image: ${registry_url}/my-org/my-app:${app_version}
-        ports:
-          - "8080:80"
+    ```toml
+    [service]
+    name = "my-app"
+    image = "${registry_url}/${org_name}/my-app:${app_version}"
+    
+    [[port]]
+    host = 8080
+    container = 80
+    
+    [dispenser]
+    watch = true
+    initialize = "immediately"
     ```
 
-### Step 7: Validating Configuration
+### Step 7: Working with Networks (Optional)
+
+Dispenser supports Docker networks to enable communication between services. Networks are declared in `dispenser.toml` and referenced in individual service configurations.
+
+1.  Declare networks in your `dispenser.toml`.
+
+    ```toml
+    delay = 60
+
+    # Network declarations
+    [[network]]
+    name = "app-network"
+    driver = "bridge"
+    
+    [[service]]
+    path = "my-app"
+    
+    [[service]]
+    path = "my-database"
+    ```
+
+2.  Reference networks in your service configurations.
+
+    ```toml
+    # my-app/service.toml
+    [service]
+    name = "my-app"
+    image = "ghcr.io/my-org/my-app:latest"
+    
+    [[port]]
+    host = 8080
+    container = 80
+    
+    [[network]]
+    name = "app-network"
+    
+    [dispenser]
+    watch = true
+    initialize = "immediately"
+    ```
+
+    ```toml
+    # my-database/service.toml
+    [service]
+    name = "postgres-db"
+    image = "postgres:15"
+    
+    [env]
+    POSTGRES_PASSWORD = "secretpassword"
+    
+    [[network]]
+    name = "app-network"
+    
+    [dispenser]
+    watch = false
+    initialize = "immediately"
+    ```
+
+Now both services can communicate with each other using their service names as hostnames.
+
+For advanced network configuration including external networks, internal networks, labels, and different drivers, see the [Network Configuration Guide](NETWORKS.md).
+
+### Step 8: Advanced Service Configuration
+
+The `service.toml` format supports many advanced features. For a complete reference of all available configuration options, see the [Service Configuration Reference](SERVICE_CONFIG.md).
+
+#### Volume Mounts
+
+```toml
+[[volume]]
+source = "./data"
+target = "/app/data"
+
+[[volume]]
+source = "./config"
+target = "/app/config"
+readonly = true
+```
+
+#### Custom Commands and Working Directory
+
+```toml
+[service]
+name = "worker"
+image = "python:3.11"
+command = ["python", "worker.py", "--verbose"]
+working_dir = "/app"
+```
+
+#### Resource Limits
+
+```toml
+[service]
+name = "my-app"
+image = "my-app:latest"
+memory = "512m"
+cpus = "1.0"
+```
+
+#### User and Hostname
+
+```toml
+[service]
+name = "my-app"
+image = "my-app:latest"
+user = "1000:1000"
+hostname = "myapp-container"
+```
+
+### Step 9: Validating Configuration
 
 Before applying changes, you can validate your configuration files (including variable substitution) to ensure there are no syntax errors or missing variables.
 
@@ -229,21 +374,23 @@ If the configuration is valid, it will output:
 Dispenser config is ok.
 ```
 
-If there's an error `dispenser` will show you a detailed error message.
+For more command-line options, see the [CLI Reference](CLI.md).
+
+If there's an error, `dispenser` will show you a detailed error message.
 
 ```
 ---------------------------------- <string> -----------------------------------
    2 |
-   3 | [[instance]]
-   4 | path = "nginx"
-   5 > images = [{ registry = "${missing}", name = "nginx", tag = "latest" }]
-     i                         ^^^^^^^^^^ undefined value
+   3 | [service]
+   4 | name = "nginx"
+   5 > image = "${missing}/nginx:latest"
+     i          ^^^^^^^^^^ undefined value
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 No referenced variables
 -------------------------------------------------------------------------------
 ```
 
-### Step 8: Start and Verify the Deployment
+### Step 10: Start and Verify the Deployment
 
 1.  Exit the `dispenser` user session to return to your regular user.
     ```sh
@@ -267,13 +414,15 @@ No referenced variables
     ```
     You should see a container running with the `ghcr.io/my-org/my-app:latest` image.
 
-From now on, whenever you push a new image to your registry with the `latest` tag, Dispenser will automatically detect it, pull the new version, and redeploy your service with zero downtime.
+From now on, whenever you push a new image to your registry with the `latest` tag (and `watch = true` is set in the service configuration), Dispenser will automatically detect it, pull the new version, and redeploy your service with zero downtime.
 
 ### Managing the Service with CLI Signals
 
 Dispenser includes a built-in mechanism to send signals to the running daemon using the `-s` or `--signal` flag. This allows you to reload the configuration or stop the service without needing to use `kill` manually.
 
 **Note:** This command relies on the `dispenser.pid` file, so you should run it from the same directory where Dispenser is running (typically `/opt/dispenser` for the default installation).
+
+For complete CLI documentation including all available flags, see the [CLI Reference](CLI.md).
 
 **Reload Configuration:**
 
@@ -283,7 +432,7 @@ To reload the `dispenser.toml` configuration without restarting the process:
 dispenser -s reload
 ```
 
-This is useful for adding new instances or changing configuration parameters without interrupting currently monitored services.
+This is useful for adding new services or changing configuration parameters without interrupting currently monitored services.
 
 **Stop Service:**
 
@@ -292,6 +441,15 @@ To gracefully stop the Dispenser daemon:
 ```sh
 dispenser -s stop
 ```
+
+## Additional Resources
+
+- **[CLI Reference](CLI.md)** - All command-line flags and options
+- **[Service Configuration Reference](SERVICE_CONFIG.md)** - Complete field documentation
+- **[Network Configuration Guide](NETWORKS.md)** - Advanced networking setup
+- **[Cron Documentation](CRON.md)** - Scheduled deployments
+- **[GCP Secrets Integration](GCP.md)** - Using Google Secret Manager
+- **[Migration Guide](MIGRATION_GUIDE.md)** - Migrating from Docker Compose format
 
 ## Building from Source
 

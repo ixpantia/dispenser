@@ -1,36 +1,35 @@
-use config_file::DispenserConfigFile;
 use std::{process::ExitCode, sync::Arc};
+
+use crate::service::{
+    file::EntrypointFile,
+    manager::{ServiceMangerConfig, ServicesManager},
+    vars::ServiceConfigError,
+};
 use tokio::sync::Mutex;
-
-use crate::instance::Instances;
 mod cli;
-mod config;
-mod config_file;
-mod instance;
-mod manifests;
-mod master;
 mod secrets;
+mod service;
 mod signals;
-
-const LOOP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
 #[tokio::main]
 async fn main() -> ExitCode {
     if let Some(signal) = &cli::get_cli_args().signal {
         return signals::send_signal(signal.clone());
     }
-
-    let config_file = match DispenserConfigFile::try_init().await {
-        Ok(config_file) => config_file,
+    let service_manager_config = match ServiceMangerConfig::try_init().await {
+        Ok(conf) => conf,
         Err(e) => {
-            eprintln!("{e:?}");
-            // Early return
+            match e {
+                ServiceConfigError::Template((path, template_err)) => {
+                    eprintln!("Could not render {path:#?}: {:#}", template_err);
+                }
+                _ => {
+                    eprintln!("Error initializing service manager: {}", e);
+                }
+            }
             return ExitCode::FAILURE;
         }
     };
-
-    // Initialize the loggr
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     // If the user set the test flag it
     // will just validate the config
@@ -38,6 +37,9 @@ async fn main() -> ExitCode {
         eprintln!("Dispenser config is ok.");
         return ExitCode::SUCCESS;
     }
+
+    // Initialize the loggr
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     log::info!("Dispenser running with PID: {}", std::process::id());
 
@@ -49,28 +51,54 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let config = config_file.into_config().await;
-
-    let instances = Arc::new(Mutex::new(Instances::default()));
-    // We need to initialize the reload and interrupt handlers
-    signals::handle_reload(instances.clone(), tokio::runtime::Handle::current());
-    signals::handle_sigint(instances.clone());
-    // Override the instances
-    *instances.lock().await = config.get_instances().await;
-    let mut last_image_poll = std::time::Instant::now();
-
-    loop {
-        let instances = instances.lock().await.clone();
-        // Check if enough time has passed to re poll the images
-        let poll_images = last_image_poll.elapsed() >= instances.delay;
-        if poll_images {
-            last_image_poll = std::time::Instant::now();
+    let manager = match ServicesManager::from_config(service_manager_config).await {
+        Ok(manager) => Arc::new(manager),
+        Err(e) => {
+            log::error!("Failed to create services manager: {e}");
+            return ExitCode::FAILURE;
         }
-        tokio::time::sleep(LOOP_INTERVAL).await;
-        for instance in instances.inner.into_iter() {
-            tokio::spawn(async move {
-                instance.lock().await.poll(poll_images).await;
-            });
+    };
+
+    // Wrap the manager in a Mutex so we can replace it on reload
+    let manager_holder = Arc::new(Mutex::new(manager));
+
+    // Create a notification channel for reload signals
+    let reload_signal = Arc::new(tokio::sync::Notify::new());
+    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+
+    // Initialize signal handlers for the new system
+    signals::handle_reload(reload_signal.clone());
+    signals::handle_sigint(shutdown_signal.clone());
+
+    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
+
+    // Main loop: start polling and wait for reload signals
+    loop {
+        let current_manager = manager_holder.lock().await.clone();
+
+        tokio::select! {
+            _ = current_manager.start_polling() => {
+                // Polling ended normally (shouldn't happen unless cancelled)
+                log::info!("Polling ended");
+            }
+            _ = reload_signal.notified() => {
+                // Reload signal received
+                if let Err(e) = signals::reload_manager(manager_holder.clone()).await {
+                    log::error!("Reload failed: {e}");
+                    // Continue with the old manager
+                } else {
+                    log::info!("Starting new manager...");
+                    // Continue the loop with the new manager
+                }
+            }
+            _ = shutdown_signal.notified() => {
+                // Reload signal received
+                if let Err(e) = signals::sigint_manager(manager_holder.clone()).await {
+                    log::error!("Shutdown failed: {e}");
+                    // Continue with the old manager
+                }
+                std::process::exit(0);
+            }
         }
     }
 }
