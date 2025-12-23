@@ -1,0 +1,8 @@
+# Dispenser entrypoint file
+# This file defines which services to manage
+
+[[services]]
+path = "nginx"
+
+[[services]]
+path = "hello-world"

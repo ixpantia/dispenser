@@ -1,0 +1,20 @@
+# Service configuration for hello-world
+
+# Service metadata (required)
+[service]
+name = "hello-world-service"
+image = "hello-world"
+
+# Restart policy (optional, defaults to "No")
+restart = "No"
+
+# Dispenser-specific configuration (required)
+[dispenser]
+# Don't watch for image updates
+watch = false
+
+# Initialize only when triggered (by cron in this case)
+initialize = "on-trigger"
+
+# Run every 10 seconds
+cron = "*/10 * * * * *"

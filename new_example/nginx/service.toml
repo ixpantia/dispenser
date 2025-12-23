@@ -1,0 +1,22 @@
+# Service configuration for nginx
+
+# Service metadata (required)
+[service]
+name = "nginx-service"
+image = "${ docker_io }/nginx:latest"
+
+# Port mappings (optional)
+[[port]]
+host = 8080
+container = 80
+
+# Restart policy (optional, defaults to "No")
+restart = "Always"
+
+# Dispenser-specific configuration (required)
+[dispenser]
+# Watch for image updates
+watch = true
+
+# Initialize immediately on startup (default behavior)
+initialize = "immediately"
