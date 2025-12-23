@@ -41,20 +41,20 @@ impl<'de> Deserialize<'de> for ServiceVars {
 }
 
 impl ServiceVars {
-    pub async fn materialize(self) -> ServiceVarsMaterialized {
+    pub async fn materialize(self) -> Result<ServiceVarsMaterialized, ServiceConfigError> {
         let mut inner = HashMap::new();
         for (key, entry) in self.inner {
             let value = match entry {
                 ServiceVarEntry::Raw(s) => s,
                 ServiceVarEntry::Secret(secret) => match secret {
                     Secret::Google { name, version } => {
-                        secrets::gcp::fetch_secret(&name, &version).await
+                        secrets::gcp::fetch_secret(&name, &version).await?
                     }
                 },
             };
             inner.insert(key, value);
         }
-        ServiceVarsMaterialized { inner }
+        Ok(ServiceVarsMaterialized { inner })
     }
 }
 
@@ -66,7 +66,7 @@ pub struct ServiceVarsMaterialized {
 impl ServiceVarsMaterialized {
     pub async fn try_init() -> Result<Self, ServiceConfigError> {
         let vars_raw = ServiceVars::try_init()?;
-        Ok(vars_raw.materialize().await)
+        vars_raw.materialize().await
     }
 }
 
@@ -154,6 +154,12 @@ pub enum ServiceConfigError {
     Toml(#[from] toml::de::Error),
     #[error("Templating error: {0:?}")]
     Template((PathBuf, minijinja::Error)),
+    #[error("UTF-8 error: {0}")]
+    Utf8(#[from] std::str::Utf8Error),
+    #[error("GCP secret fetching error: {0}")]
+    GcpSecretFetch(#[from] google_cloud_secretmanager_v1::Error),
+    #[error("GCP Client error: {0}")]
+    GcpClient(#[from] google_cloud_gax::client_builder::Error),
 }
 
 pub fn render_template(

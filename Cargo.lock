@@ -300,6 +300,7 @@ dependencies = [
  "env_logger",
  "futures",
  "futures-util",
+ "google-cloud-gax",
  "google-cloud-secretmanager-v1",
  "log",
  "minijinja",
