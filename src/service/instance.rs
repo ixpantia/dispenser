@@ -262,7 +262,12 @@ impl ServiceInstance {
 
         // Add volume mappings
         for volume in &self.volume {
-            cmd.args(["-v", &format!("{}:{}", volume.source, volume.target)]);
+            let mount_str = if volume.readonly {
+                format!("{}:{}:ro", volume.source, volume.target)
+            } else {
+                format!("{}:{}", volume.source, volume.target)
+            };
+            cmd.args(["-v", &mount_str]);
         }
 
         // Add environment variables
@@ -281,6 +286,27 @@ impl ServiceInstance {
         }
         if let Some(cpus) = &self.service.cpus {
             cmd.args(["--cpus", cpus]);
+        }
+
+        // Add working directory
+        if let Some(working_dir) = &self.service.working_dir {
+            cmd.args(["--workdir", working_dir]);
+        }
+
+        // Add user
+        if let Some(user) = &self.service.user {
+            cmd.args(["--user", user]);
+        }
+
+        // Add hostname
+        if let Some(hostname) = &self.service.hostname {
+            cmd.args(["--hostname", hostname]);
+        }
+
+        // Add entrypoint if specified
+        if let Some(entrypoint) = &self.service.entrypoint {
+            cmd.arg("--entrypoint");
+            cmd.arg(entrypoint.join(" "));
         }
 
         // Add the image

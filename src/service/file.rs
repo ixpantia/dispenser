@@ -175,6 +175,8 @@ pub struct PortEntry {
 pub struct VolumeEntry {
     pub source: String,
     pub target: String,
+    #[serde(default)]
+    pub readonly: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -183,6 +185,14 @@ pub struct ServiceEntry {
     pub image: String,
     #[serde(default)]
     pub command: Option<Vec<String>>,
+    #[serde(default)]
+    pub entrypoint: Option<Vec<String>>,
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub hostname: Option<String>,
     /// Memory limit (e.g., "512m", "2g")
     pub memory: Option<String>,
     /// Number of CPUs (e.g., "1.5", "2")

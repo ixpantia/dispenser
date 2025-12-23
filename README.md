@@ -4,6 +4,15 @@ This tool manages containerized applications by continuously monitoring your art
 
 dispenser operates as a daemon that runs in the background on the host server that watches your artifact registry, detecting when new versions of your container images are published.
 
+## Documentation
+
+- **[CLI Reference](CLI.md)** - Complete command-line options and usage
+- **[Service Configuration](SERVICE_CONFIG.md)** - Detailed `service.toml` reference
+- **[Network Configuration](NETWORKS.md)** - Docker network setup guide
+- **[Cron Scheduling](CRON.md)** - Scheduled deployments
+- **[GCP Secrets](GCP.md)** - Google Secret Manager integration
+- **[Migration Guide](MIGRATION_GUIDE.md)** - Migrating from Docker Compose
+
 ## Prerequisites
 
 Before installing Dispenser, ensure the following are installed on your server:
@@ -21,9 +30,9 @@ Download the latest `.deb` or `.rpm` package from the [releases page](https://gi
 
 ```sh
 # Download the .deb package
-# wget https://github.com/ixpantia/dispenser/releases/download/v0.6.0/dispenser-0.6-0.x86_64.deb
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.7.0/dispenser-0.7-0.x86_64.deb
 
-sudo apt install ./dispenser-0.6-0.x86_64.deb
+sudo apt install ./dispenser-0.7-0.x86_64.deb
 ```
 
 ### RHEL / CentOS / Fedora
@@ -32,7 +41,7 @@ sudo apt install ./dispenser-0.6-0.x86_64.deb
 # Download the .rpm package
 # wget ...
 
-sudo dnf install ./dispenser-0.6-0.x86_64.rpm
+sudo dnf install ./dispenser-0.7-0.x86_64.rpm
 ```
 
 The installation process will:
@@ -301,9 +310,11 @@ Dispenser supports Docker networks to enable communication between services. Net
 
 Now both services can communicate with each other using their service names as hostnames.
 
+For advanced network configuration including external networks, internal networks, labels, and different drivers, see the [Network Configuration Guide](NETWORKS.md).
+
 ### Step 8: Advanced Service Configuration
 
-The `service.toml` format supports many advanced features:
+The `service.toml` format supports many advanced features. For a complete reference of all available configuration options, see the [Service Configuration Reference](SERVICE_CONFIG.md).
 
 #### Volume Mounts
 
@@ -363,6 +374,8 @@ If the configuration is valid, it will output:
 Dispenser config is ok.
 ```
 
+For more command-line options, see the [CLI Reference](CLI.md).
+
 If there's an error, `dispenser` will show you a detailed error message.
 
 ```
@@ -409,6 +422,8 @@ Dispenser includes a built-in mechanism to send signals to the running daemon us
 
 **Note:** This command relies on the `dispenser.pid` file, so you should run it from the same directory where Dispenser is running (typically `/opt/dispenser` for the default installation).
 
+For complete CLI documentation including all available flags, see the [CLI Reference](CLI.md).
+
 **Reload Configuration:**
 
 To reload the `dispenser.toml` configuration without restarting the process:
@@ -427,9 +442,14 @@ To gracefully stop the Dispenser daemon:
 dispenser -s stop
 ```
 
-## Migrating from Docker Compose
+## Additional Resources
 
-If you're migrating from an older version of Dispenser that used `docker-compose.yaml` files, please refer to the [Migration Guide](MIGRATION_GUIDE.md) for detailed instructions on converting your configuration to the new `service.toml` format.
+- **[CLI Reference](CLI.md)** - All command-line flags and options
+- **[Service Configuration Reference](SERVICE_CONFIG.md)** - Complete field documentation
+- **[Network Configuration Guide](NETWORKS.md)** - Advanced networking setup
+- **[Cron Documentation](CRON.md)** - Scheduled deployments
+- **[GCP Secrets Integration](GCP.md)** - Using Google Secret Manager
+- **[Migration Guide](MIGRATION_GUIDE.md)** - Migrating from Docker Compose format
 
 ## Building from Source
 
