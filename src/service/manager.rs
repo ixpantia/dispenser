@@ -22,6 +22,8 @@ pub struct ServicesManager {
 
 impl ServicesManager {
     pub async fn from_config(config: EntrypointFile) -> Result<Self, ServiceConfigError> {
+        // Get the delay from config (in seconds)
+        let delay = Duration::from_secs(config.delay);
         let mut instances = Vec::new();
 
         // Load and materialize variables once for all services
@@ -75,9 +77,6 @@ impl ServicesManager {
 
         // Create the broadcast channel for cancellation
         let (cancel_tx, _) = tokio::sync::broadcast::channel(1);
-
-        // Use a default delay of 60 seconds for polling images
-        let delay = Duration::from_secs(60);
 
         let inner = ServiceManagerInner { instances, delay };
 

@@ -6,7 +6,15 @@ use super::vars::{render_template, ServiceConfigError, ServiceVarsMaterialized};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EntrypointFile {
+    #[serde(rename = "service")]
     pub services: Vec<EntrypointFileEntry>,
+    /// Delay in seconds between polling for new images (default: 60)
+    #[serde(default = "default_delay")]
+    pub delay: u64,
+}
+
+fn default_delay() -> u64 {
+    60
 }
 
 impl EntrypointFile {
