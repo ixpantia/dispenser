@@ -121,4 +121,8 @@ pub struct VolumeEntry {
 pub struct ServiceEntry {
     pub name: String,
     pub image: String,
+    /// Memory limit (e.g., "512m", "2g")
+    pub memory: Option<String>,
+    /// Number of CPUs (e.g., "1.5", "2")
+    pub cpus: Option<String>,
 }

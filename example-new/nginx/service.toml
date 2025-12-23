@@ -4,6 +4,9 @@
 [service]
 name = "nginx-service"
 image = "${ docker_io }/nginx:latest"
+# Optional: Resource limits
+memory = "256m"  # Memory limit (e.g., "512m", "1g", "2g")
+cpus = "1.0"     # CPU limit (e.g., "0.5", "1.0", "2.0")
 
 # Port mappings (optional)
 [[port]]

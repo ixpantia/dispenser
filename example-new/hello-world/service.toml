@@ -4,6 +4,9 @@
 [service]
 name = "hello-world-job"
 image = "hello-world"
+# Optional: Resource limits
+memory = "128m"  # Memory limit (e.g., "128m", "256m", "1g")
+cpus = "0.5"     # CPU limit (e.g., "0.5", "1.0", "2.0")
 
 # Restart policy (optional, defaults to "No")
 restart = "no"
