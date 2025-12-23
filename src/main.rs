@@ -54,10 +54,11 @@ async fn main() -> ExitCode {
 
     // Create a notification channel for reload signals
     let reload_signal = Arc::new(tokio::sync::Notify::new());
+    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
 
     // Initialize signal handlers for the new system
     signals::handle_reload(reload_signal.clone());
-    signals::handle_sigint(manager_holder.lock().await.clone());
+    signals::handle_sigint(shutdown_signal.clone());
 
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
 
@@ -79,6 +80,14 @@ async fn main() -> ExitCode {
                     log::info!("Starting new manager...");
                     // Continue the loop with the new manager
                 }
+            }
+            _ = shutdown_signal.notified() => {
+                // Reload signal received
+                if let Err(e) = signals::sigint_manager(manager_holder.clone()).await {
+                    log::error!("Shutdown failed: {e}");
+                    // Continue with the old manager
+                }
+                std::process::exit(0);
             }
         }
     }

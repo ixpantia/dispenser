@@ -11,6 +11,9 @@ cpus = "0.5"     # CPU limit (e.g., "0.5", "1.0", "2.0")
 # Restart policy (optional, defaults to "No")
 restart = "no"
 
+[[network]]
+name = "dispenser-net"
+
 # Dispenser-specific configuration (required)
 [dispenser]
 # Don't watch for image updates

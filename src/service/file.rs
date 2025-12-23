@@ -8,6 +8,8 @@ use super::vars::{render_template, ServiceConfigError, ServiceVarsMaterialized};
 pub struct EntrypointFile {
     #[serde(rename = "service")]
     pub services: Vec<EntrypointFileEntry>,
+    #[serde(rename = "network")]
+    pub networks: Vec<NetworkDeclarationEntry>,
     /// Delay in seconds between polling for new images (default: 60)
     #[serde(default = "default_delay")]
     pub delay: u64,
@@ -32,6 +34,47 @@ impl EntrypointFile {
         // Parse the rendered config as TOML
         Ok(toml::from_str(&rendered_config)?)
     }
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NetworkDeclarationEntry {
+    pub name: String,
+    #[serde(default = "default_network_driver")]
+    pub driver: NetworkDriver,
+    #[serde(default = "default_false")]
+    pub external: bool,
+    #[serde(default = "default_false")]
+    pub internal: bool,
+    #[serde(default = "default_true")]
+    pub attachable: bool,
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
+}
+
+fn default_network_driver() -> NetworkDriver {
+    NetworkDriver::Bridge
+}
+
+fn default_false() -> bool {
+    false
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub enum NetworkDriver {
+    #[default]
+    #[serde(alias = "bridge")]
+    Bridge,
+    #[serde(alias = "host")]
+    Host,
+    #[serde(alias = "overlay")]
+    Overlay,
+    #[serde(alias = "macvlan")]
+    Macvlan,
+    #[serde(alias = "none")]
+    None,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

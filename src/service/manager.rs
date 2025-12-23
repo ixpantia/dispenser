@@ -7,17 +7,21 @@ use crate::service::{
     file::{EntrypointFile, ServiceFile},
     instance::{CronWatcher, ServiceInstance},
     manifest::ImageWatcher,
+    network::NetworkInstance,
     vars::{render_template, ServiceConfigError, ServiceVarsMaterialized},
 };
 
 struct ServiceManagerInner {
     instances: Vec<Arc<Mutex<ServiceInstance>>>,
+    networks: Vec<NetworkInstance>,
     delay: Duration,
 }
 
 pub struct ServicesManager {
+    pub service_names: Vec<String>,
     inner: Mutex<ServiceManagerInner>,
-    cancel_tx: tokio::sync::broadcast::Sender<()>,
+    cancel_tx: tokio::sync::mpsc::Sender<()>,
+    cancel_rx: Mutex<tokio::sync::mpsc::Receiver<()>>,
 }
 
 impl ServicesManager {
@@ -25,9 +29,25 @@ impl ServicesManager {
         // Get the delay from config (in seconds)
         let delay = Duration::from_secs(config.delay);
         let mut instances = Vec::new();
+        let mut networks = Vec::new();
+        let mut service_names = Vec::new();
 
         // Load and materialize variables once for all services
         let vars = ServiceVarsMaterialized::try_init().await?;
+
+        // Process networks first - create NetworkInstance objects
+        for network_entry in config.networks {
+            let network = NetworkInstance::from(network_entry);
+            networks.push(network);
+        }
+
+        // Ensure all networks exist before creating services
+        for network in &networks {
+            if let Err(e) = network.ensure_exists().await {
+                log::error!("Failed to ensure network {} exists: {}", network.name, e);
+                return Err(ServiceConfigError::Io(e));
+            }
+        }
 
         // Iterate through each service entry in the config
         for entry in config.services {
@@ -57,6 +77,8 @@ impl ServicesManager {
                 .as_ref()
                 .map(|schedule| CronWatcher::new(schedule));
 
+            service_names.push(service_file.service.name.clone());
+
             // Create the ServiceInstance
             let instance = ServiceInstance {
                 dir: entry.path.clone(),
@@ -76,17 +98,24 @@ impl ServicesManager {
         }
 
         // Create the broadcast channel for cancellation
-        let (cancel_tx, _) = tokio::sync::broadcast::channel(1);
+        let (cancel_tx, cancel_rx) = tokio::sync::mpsc::channel(1);
+        let cancel_rx = Mutex::new(cancel_rx);
 
-        let inner = ServiceManagerInner { instances, delay };
+        let inner = ServiceManagerInner {
+            instances,
+            networks,
+            delay,
+        };
 
         Ok(ServicesManager {
+            service_names,
             inner: Mutex::new(inner),
             cancel_tx,
+            cancel_rx,
         })
     }
 
-    pub fn cancel(&self) {
+    pub async fn cancel(&self) {
         let _ = self.cancel_tx.send(());
     }
 
@@ -94,7 +123,6 @@ impl ServicesManager {
         log::info!("Starting polling task");
         let inner = self.inner.lock().await;
         let delay = inner.delay;
-        let mut cancel_rx = self.cancel_tx.subscribe();
 
         let polls = inner
             .instances
@@ -125,9 +153,41 @@ impl ServicesManager {
             })
             .collect::<JoinSet<_>>();
 
+        let mut cancel_rx = self.cancel_rx.lock().await;
+
         tokio::select! {
             _ = polls.join_all() => {}
-            _ = cancel_rx.recv() => {}
+            _ = cancel_rx.recv() => {
+                log::warn!("CANCELLED");
+            }
         }
+    }
+
+    /// Clean up networks created by this manager
+    /// This should be called on shutdown to remove non-external networks
+    pub async fn cleanup_networks(&self) {
+        log::info!("Cleaning up networks");
+        let inner = self.inner.lock().await;
+
+        for network in &inner.networks {
+            if let Err(e) = network.remove_network().await {
+                log::warn!("Failed to remove network {}: {}", network.name, e);
+            }
+        }
+    }
+
+    pub async fn remove_containers(&self, names: Vec<String>) {
+        let instances = self.inner.lock().await;
+        for instance in &instances.instances {
+            let instance = instance.lock().await;
+            if names.contains(&instance.service.name) {
+                let _ = instance.stop_container().await;
+                let _ = instance.remove_container().await;
+            }
+        }
+    }
+    pub async fn shutdown(&self) {
+        self.remove_containers(self.service_names.clone()).await;
+        self.cleanup_networks().await;
     }
 }
