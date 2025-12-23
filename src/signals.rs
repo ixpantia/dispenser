@@ -1,5 +1,5 @@
-use crate::service::file::EntrypointFile;
 use crate::service::manager::ServicesManager;
+use crate::service::{file::EntrypointFile, manager::ServiceMangerConfig};
 use signal_hook::{
     consts::{SIGHUP, SIGINT},
     iterator::Signals,
@@ -92,7 +92,7 @@ pub async fn reload_manager(
     log::info!("Reloading configuration...");
 
     // Load the new configuration
-    let entrypoint_file = match EntrypointFile::try_init().await {
+    let service_manager_config = match ServiceMangerConfig::try_init().await {
         Ok(entrypoint_file) => entrypoint_file,
         Err(e) => {
             log::error!("Failed to reload entrypoint file: {e:?}");
@@ -102,7 +102,7 @@ pub async fn reload_manager(
     };
 
     // Create a new manager with the new configuration
-    let new_manager = match ServicesManager::from_config(entrypoint_file).await {
+    let new_manager = match ServicesManager::from_config(service_manager_config).await {
         Ok(manager) => Arc::new(manager),
         Err(e) => {
             log::error!("Failed to create new services manager: {e}");

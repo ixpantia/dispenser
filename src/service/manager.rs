@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use futures_util::future;
 use tokio::{sync::Mutex, task::JoinSet};
@@ -10,6 +10,42 @@ use crate::service::{
     network::NetworkInstance,
     vars::{render_template, ServiceConfigError, ServiceVarsMaterialized},
 };
+
+pub struct ServiceMangerConfig {
+    entrypoint_file: EntrypointFile,
+    services: Vec<(PathBuf, ServiceFile)>,
+}
+
+impl ServiceMangerConfig {
+    pub async fn try_init() -> Result<Self, ServiceConfigError> {
+        // Load and materialize variables
+        let vars = ServiceVarsMaterialized::try_init().await?;
+        let entrypoint_file = EntrypointFile::try_init(&vars).await?;
+
+        let mut services = Vec::new();
+
+        for entry in &entrypoint_file.services {
+            // Construct the path to service.toml
+            let service_toml_path = entry.path.join("service.toml");
+
+            // Read the service.toml file
+            let service_file_content = tokio::fs::read_to_string(&service_toml_path).await?;
+
+            // Render the template with variables
+            let rendered_service = render_template(&service_file_content, &vars)
+                .map_err(|e| ServiceConfigError::Template((service_toml_path.clone(), e)))?;
+
+            // Parse the rendered config as TOML
+            let service_file: ServiceFile = toml::from_str(&rendered_service)?;
+
+            services.push((entry.path.clone(), service_file));
+        }
+        Ok(Self {
+            services,
+            entrypoint_file,
+        })
+    }
+}
 
 struct ServiceManagerInner {
     instances: Vec<Arc<Mutex<ServiceInstance>>>,
@@ -25,18 +61,15 @@ pub struct ServicesManager {
 }
 
 impl ServicesManager {
-    pub async fn from_config(config: EntrypointFile) -> Result<Self, ServiceConfigError> {
+    pub async fn from_config(config: ServiceMangerConfig) -> Result<Self, ServiceConfigError> {
         // Get the delay from config (in seconds)
-        let delay = Duration::from_secs(config.delay);
+        let delay = Duration::from_secs(config.entrypoint_file.delay);
         let mut instances = Vec::new();
         let mut networks = Vec::new();
         let mut service_names = Vec::new();
 
-        // Load and materialize variables once for all services
-        let vars = ServiceVarsMaterialized::try_init().await?;
-
         // Process networks first - create NetworkInstance objects
-        for network_entry in config.networks {
+        for network_entry in config.entrypoint_file.networks {
             let network = NetworkInstance::from(network_entry);
             networks.push(network);
         }
@@ -50,51 +83,57 @@ impl ServicesManager {
         }
 
         // Iterate through each service entry in the config
-        for entry in config.services {
-            // Construct the path to service.toml
-            let service_toml_path = entry.path.join("service.toml");
+        let mut join_set = JoinSet::new();
 
-            // Read the service.toml file
-            let service_file_content = tokio::fs::read_to_string(&service_toml_path).await?;
+        for (entry_path, service_file) in config.services {
+            join_set.spawn(async move {
+                log::debug!("Initializing config for {entry_path:?}");
 
-            // Render the template with variables
-            let rendered_service = render_template(&service_file_content, &vars)?;
+                // Initialize the image watcher if watch is enabled
+                let image_watcher = if service_file.dispenser.watch {
+                    Some(ImageWatcher::initialize(&service_file.service.image).await)
+                } else {
+                    None
+                };
 
-            // Parse the rendered config as TOML
-            let service_file: ServiceFile = toml::from_str(&rendered_service)?;
+                // Create cron watcher if cron schedule is specified
+                let cron_watcher = service_file
+                    .dispenser
+                    .cron
+                    .as_ref()
+                    .map(|schedule| CronWatcher::new(schedule));
 
-            // Initialize the image watcher if watch is enabled
-            let image_watcher = if service_file.dispenser.watch {
-                Some(ImageWatcher::initialize(&service_file.service.image).await)
-            } else {
-                None
-            };
+                let service_name = service_file.service.name.clone();
 
-            // Create cron watcher if cron schedule is specified
-            let cron_watcher = service_file
-                .dispenser
-                .cron
-                .as_ref()
-                .map(|schedule| CronWatcher::new(schedule));
+                // Create the ServiceInstance
+                let instance = ServiceInstance {
+                    dir: entry_path,
+                    service: service_file.service,
+                    ports: service_file.ports,
+                    volume: service_file.volume,
+                    env: service_file.env,
+                    restart: service_file.restart,
+                    network: service_file.network,
+                    dispenser: service_file.dispenser,
+                    depends_on: service_file.depends_on,
+                    cron_watcher,
+                    image_watcher,
+                };
 
-            service_names.push(service_file.service.name.clone());
+                (service_name, Arc::new(Mutex::new(instance)))
+            });
+        }
 
-            // Create the ServiceInstance
-            let instance = ServiceInstance {
-                dir: entry.path.clone(),
-                service: service_file.service,
-                ports: service_file.ports,
-                volume: service_file.volume,
-                env: service_file.env,
-                restart: service_file.restart,
-                network: service_file.network,
-                dispenser: service_file.dispenser,
-                depends_on: service_file.depends_on,
-                cron_watcher,
-                image_watcher,
-            };
-
-            instances.push(Arc::new(Mutex::new(instance)));
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok((service_name, instance)) => {
+                    service_names.push(service_name);
+                    instances.push(instance);
+                }
+                Err(e) => {
+                    log::error!("Failed to initialize service: {}", e);
+                }
+            }
         }
 
         // Create the broadcast channel for cancellation

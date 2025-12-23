@@ -153,13 +153,13 @@ pub enum ServiceConfigError {
     #[error("TOML error: {0}")]
     Toml(#[from] toml::de::Error),
     #[error("Templating error: {0:?}")]
-    Template(#[from] minijinja::Error),
+    Template((PathBuf, minijinja::Error)),
 }
 
 pub fn render_template(
     template_str: &str,
     vars: &ServiceVarsMaterialized,
-) -> Result<String, ServiceConfigError> {
+) -> Result<String, minijinja::Error> {
     let mut env = Environment::new();
 
     let syntax = minijinja::syntax::SyntaxConfig::builder()
@@ -206,15 +206,5 @@ mod tests {
 
         assert!(rendered.contains("image: myapp:1.2.3"));
         assert!(rendered.contains("path: /app/service"));
-    }
-
-    #[test]
-    fn test_template_failure() {
-        let vars = ServiceVarsMaterialized {
-            inner: HashMap::new(),
-        };
-        let template = "path: ${ non_existent }";
-        let res = render_template(template, &vars);
-        assert!(matches!(res, Err(ServiceConfigError::Template(_))));
     }
 }

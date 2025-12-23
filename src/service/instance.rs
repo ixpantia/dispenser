@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use chrono::{DateTime, Local};
 use cron::Schedule;
@@ -129,12 +129,21 @@ impl ServiceInstance {
                     },
                     Err(_) => false,
                 };
+                if !status {
+                    log::info!(
+                        "Service {} is waiting for {} ({:?})",
+                        self.service.name,
+                        container,
+                        condition
+                    );
+                }
                 depends_on_conditions.push(status)
             }
             if depends_on_conditions.iter().all(|&c| c) {
                 break;
             }
             depends_on_conditions.clear();
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         if let Err(e) = self.pull_image().await {
@@ -195,14 +204,14 @@ impl ServiceInstance {
             Ok(())
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
-            log::error!(
+            log::warn!(
                 "Failed to stop container {}: {}",
                 self.service.name,
                 error_msg
             );
             Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to stop container: {}", error_msg),
+                format!("Failed to warn container: {}", error_msg),
             ))
         }
     }
@@ -276,6 +285,10 @@ impl ServiceInstance {
 
         // Add the image
         cmd.arg(&self.service.image);
+
+        if let Some(command) = &self.service.command {
+            cmd.args(command);
+        }
 
         // Set the directory for the command
         cmd.current_dir(&self.dir);

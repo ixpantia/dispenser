@@ -1,5 +1,5 @@
 Package: dispenser
-Version: 0.6
+Version: 0.7
 Maintainer: ixpantia S.A.
 Architecture: amd64
 Description: Continously Deploy services with Docker Compose

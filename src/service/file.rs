@@ -20,16 +20,15 @@ fn default_delay() -> u64 {
 }
 
 impl EntrypointFile {
-    pub async fn try_init() -> Result<Self, ServiceConfigError> {
+    pub async fn try_init(vars: &ServiceVarsMaterialized) -> Result<Self, ServiceConfigError> {
         use std::io::Read;
         let mut config = String::new();
-        std::fs::File::open(&crate::cli::get_cli_args().config)?.read_to_string(&mut config)?;
-
-        // Load and materialize variables
-        let vars = ServiceVarsMaterialized::try_init().await?;
+        let path = crate::cli::get_cli_args().config.clone();
+        std::fs::File::open(&path)?.read_to_string(&mut config)?;
 
         // Render the template with variables
-        let rendered_config = render_template(&config, &vars)?;
+        let rendered_config =
+            render_template(&config, &vars).map_err(|e| ServiceConfigError::Template((path, e)))?;
 
         // Parse the rendered config as TOML
         Ok(toml::from_str(&rendered_config)?)
@@ -122,7 +121,17 @@ pub enum Initialize {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DependsOnCondition {
+    #[serde(
+        alias = "service-started",
+        alias = "service_started",
+        alias = "started"
+    )]
     ServiceStarted,
+    #[serde(
+        alias = "service-completed",
+        alias = "service_completed",
+        alias = "completed"
+    )]
     ServiceCompleted,
 }
 
@@ -172,6 +181,8 @@ pub struct VolumeEntry {
 pub struct ServiceEntry {
     pub name: String,
     pub image: String,
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
     /// Memory limit (e.g., "512m", "2g")
     pub memory: Option<String>,
     /// Number of CPUs (e.g., "1.5", "2")

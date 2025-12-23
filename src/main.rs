@@ -1,6 +1,10 @@
 use std::{process::ExitCode, sync::Arc};
 
-use crate::service::{file::EntrypointFile, manager::ServicesManager};
+use crate::service::{
+    file::EntrypointFile,
+    manager::{ServiceMangerConfig, ServicesManager},
+    vars::ServiceConfigError,
+};
 use tokio::sync::Mutex;
 mod cli;
 mod secrets;
@@ -12,17 +16,20 @@ async fn main() -> ExitCode {
     if let Some(signal) = &cli::get_cli_args().signal {
         return signals::send_signal(signal.clone());
     }
-
-    let entrypoint_file = match EntrypointFile::try_init().await {
-        Ok(entrypoint_file) => entrypoint_file,
+    let service_manager_config = match ServiceMangerConfig::try_init().await {
+        Ok(conf) => conf,
         Err(e) => {
-            eprintln!("Failed to load entrypoint file: {e:?}");
+            match e {
+                ServiceConfigError::Template((path, template_err)) => {
+                    eprintln!("Could not render {path:#?}: {:#}", template_err);
+                }
+                _ => {
+                    eprintln!("Error initializing service manager: {}", e);
+                }
+            }
             return ExitCode::FAILURE;
         }
     };
-
-    // Initialize the loggr
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     // If the user set the test flag it
     // will just validate the config
@@ -30,6 +37,9 @@ async fn main() -> ExitCode {
         eprintln!("Dispenser config is ok.");
         return ExitCode::SUCCESS;
     }
+
+    // Initialize the loggr
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     log::info!("Dispenser running with PID: {}", std::process::id());
 
@@ -41,7 +51,7 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let manager = match ServicesManager::from_config(entrypoint_file).await {
+    let manager = match ServicesManager::from_config(service_manager_config).await {
         Ok(manager) => Arc::new(manager),
         Err(e) => {
             log::error!("Failed to create services manager: {e}");
