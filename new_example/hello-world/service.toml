@@ -2,11 +2,11 @@
 
 # Service metadata (required)
 [service]
-name = "hello-world-service"
+name = "hello-world-job"
 image = "hello-world"
 
 # Restart policy (optional, defaults to "No")
-restart = "No"
+restart = "no"
 
 # Dispenser-specific configuration (required)
 [dispenser]

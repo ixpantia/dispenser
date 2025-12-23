@@ -90,10 +90,18 @@ pub struct Network {
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub enum Restart {
+    #[serde(alias = "always")]
     Always,
     #[default]
+    #[serde(alias = "no", alias = "never")]
     No,
+    #[serde(alias = "on-failure", alias = "on_failure", alias = "onfailure")]
     OnFailure,
+    #[serde(
+        alias = "unless-stopped",
+        alias = "unless_stopped",
+        alias = "unlessstopped"
+    )]
     UnlessStopped,
 }
 

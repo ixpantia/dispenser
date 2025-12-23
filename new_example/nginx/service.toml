@@ -10,8 +10,12 @@ image = "${ docker_io }/nginx:latest"
 host = 8080
 container = 80
 
+[[volume]]
+source = "./html"
+target = "/usr/share/nginx/html"
+
 # Restart policy (optional, defaults to "No")
-restart = "Always"
+restart = "always"
 
 # Dispenser-specific configuration (required)
 [dispenser]

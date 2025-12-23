@@ -108,6 +108,11 @@ impl ServiceInstance {
             depends_on_conditions.clear();
         }
 
+        if let Err(e) = self.pull_image().await {
+            log::error!("Failed to pull image for {}: {}", self.service.name, e);
+        }
+        self.recreate_if_required().await;
+
         let output = tokio::process::Command::new("docker")
             .args(["start", &self.service.name])
             .output()
@@ -169,6 +174,30 @@ impl ServiceInstance {
             Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("Failed to stop container: {}", error_msg),
+            ))
+        }
+    }
+
+    pub async fn remove_container(&self) -> Result<(), std::io::Error> {
+        log::info!("Removing container: {}", self.service.name);
+        let output = tokio::process::Command::new("docker")
+            .args(["rm", "-f", &self.service.name])
+            .output()
+            .await?;
+
+        if output.status.success() {
+            log::info!("Container {} removed successfully", self.service.name);
+            Ok(())
+        } else {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            log::error!(
+                "Failed to remove container {}: {}",
+                self.service.name,
+                error_msg
+            );
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to remove container: {}", error_msg),
             ))
         }
     }
@@ -236,6 +265,7 @@ impl ServiceInstance {
     pub async fn recreate_container(&self) -> Result<(), std::io::Error> {
         self.pull_image().await?;
         let _ = self.stop_container().await;
+        let _ = self.remove_container().await;
         self.create_container().await?;
         Ok(())
     }
@@ -370,7 +400,19 @@ impl ServiceInstance {
                 .collect();
 
             for volume in &self.volume {
-                let expected_bind = format!("{}:{}", volume.source, volume.target);
+                // Normalize the source path to an absolute path for comparison
+                let source_path = if std::path::Path::new(&volume.source).is_relative() {
+                    self.dir
+                        .join(&volume.source)
+                        .canonicalize()
+                        .unwrap_or_else(|_| self.dir.join(&volume.source))
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    volume.source.clone()
+                };
+
+                let expected_bind = format!("{}:{}", source_path, volume.target);
                 if !current_binds.iter().any(|b| b == &expected_bind) {
                     log::info!(
                         "Volume binding changed for {}: {}",
@@ -416,7 +458,6 @@ impl ServiceInstance {
     pub async fn poll(&mut self, poll_images: bool, init: bool) {
         if init && self.dispenser.initialize == Initialize::Immediately {
             log::info!("Starting {} immediately", self.service.name);
-            self.recreate_if_required().await;
             if let Err(e) = self.run_container().await {
                 log::error!("Failed to run container {}: {}", self.service.name, e);
             }
@@ -450,13 +491,6 @@ impl ServiceInstance {
                             "Image updated for service {}, recreating container...",
                             self.service.name
                         );
-                        if let Err(e) = self.recreate_container().await {
-                            log::error!(
-                                "Failed to recreate container {}: {}",
-                                self.service.name,
-                                e
-                            );
-                        }
                         if let Err(e) = self.run_container().await {
                             log::error!("Failed to run container {}: {}", self.service.name, e);
                         }
