@@ -11,6 +11,7 @@ use crate::service::{
     manifest::{ImageWatcher, ImageWatcherStatus},
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CronWatcher {
     schedule: Schedule,
     next: Option<DateTime<Local>>,
@@ -33,6 +34,7 @@ impl CronWatcher {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceInstance {
     pub dir: PathBuf,
     pub service: ServiceEntry,
@@ -146,10 +148,11 @@ impl ServiceInstance {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
-        if let Err(e) = self.pull_image().await {
-            log::error!("Failed to pull image for {}: {}", self.service.name, e);
+        // If we are trying to run a container that does exists,
+        // create it!
+        if self.container_does_not_exist().await {
+            self.recreate_container().await?;
         }
-        self.recreate_if_required().await;
 
         let output = tokio::process::Command::new("docker")
             .args(["start", &self.service.name])
@@ -346,11 +349,7 @@ impl ServiceInstance {
         Ok(())
     }
 
-    /// Validate if the current container is different from
-    /// this instance or if it does not exist.
-    ///
-    /// If anything has changed like: environment variables, volumes, ports, etc we need to recreate
-    pub async fn requires_recreate(&self) -> bool {
+    pub async fn container_does_not_exist(&self) -> bool {
         // Get the container inspection data
         let output = match tokio::process::Command::new("docker")
             .args(["inspect", "--format", "{{json .}}", &self.service.name])
@@ -371,206 +370,22 @@ impl ServiceInstance {
             );
             return true;
         }
-
-        let inspect_str = String::from_utf8_lossy(&output.stdout);
-        let inspect_json: serde_json::Value = match serde_json::from_str(&inspect_str) {
-            Ok(json) => json,
-            Err(e) => {
-                log::warn!("Failed to parse docker inspect JSON: {}", e);
-                return true;
-            }
-        };
-
-        // Check if the image has changed
-        let current_image = inspect_json["Config"]["Image"].as_str().unwrap_or("");
-        if current_image != self.service.image {
-            log::info!(
-                "Image changed for {}: {} -> {}",
-                self.service.name,
-                current_image,
-                self.service.image
-            );
-            return true;
-        }
-
-        // Check restart policy
-        let current_restart = inspect_json["HostConfig"]["RestartPolicy"]["Name"]
-            .as_str()
-            .unwrap_or("");
-        let expected_restart = match self.restart {
-            Restart::Always => "always",
-            Restart::No => "no",
-            Restart::OnFailure => "on-failure",
-            Restart::UnlessStopped => "unless-stopped",
-        };
-        if current_restart != expected_restart {
-            log::info!(
-                "Restart policy changed for {}: {} -> {}",
-                self.service.name,
-                current_restart,
-                expected_restart
-            );
-            return true;
-        }
-
-        // Check environment variables
-        if let Some(current_env) = inspect_json["Config"]["Env"].as_array() {
-            let mut current_env_map = HashMap::new();
-            for env_str in current_env {
-                if let Some(s) = env_str.as_str() {
-                    if let Some(pos) = s.find('=') {
-                        let (key, value) = s.split_at(pos);
-                        current_env_map.insert(key.to_string(), value[1..].to_string());
-                    }
-                }
-            }
-
-            for (key, value) in &self.env {
-                if current_env_map.get(key) != Some(value) {
-                    log::info!(
-                        "Environment variable changed for {}: {}",
-                        self.service.name,
-                        key
-                    );
-                    return true;
-                }
-            }
-        }
-
-        // Check port bindings
-        if let Some(port_bindings) = inspect_json["HostConfig"]["PortBindings"].as_object() {
-            for port in &self.ports {
-                let container_port_key = format!("{}/tcp", port.container);
-                if let Some(bindings) = port_bindings.get(&container_port_key) {
-                    if let Some(binding_array) = bindings.as_array() {
-                        if binding_array.is_empty() {
-                            log::info!("Port binding changed for {}", self.service.name);
-                            return true;
-                        }
-                        let host_port = binding_array[0]["HostPort"].as_str().unwrap_or("");
-                        if host_port != port.host.to_string() {
-                            log::info!(
-                                "Port mapping changed for {}: {} -> {}",
-                                self.service.name,
-                                host_port,
-                                port.host
-                            );
-                            return true;
-                        }
-                    }
-                } else {
-                    log::info!("Port binding missing for {}", self.service.name);
-                    return true;
-                }
-            }
-        } else if !self.ports.is_empty() {
-            log::info!("Port bindings changed for {}", self.service.name);
-            return true;
-        }
-
-        // Check volume bindings
-        if let Some(binds) = inspect_json["HostConfig"]["Binds"].as_array() {
-            let current_binds: Vec<String> = binds
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-
-            for volume in &self.volume {
-                // Normalize the source path to an absolute path for comparison
-                let source_path = if std::path::Path::new(&volume.source).is_relative() {
-                    self.dir
-                        .join(&volume.source)
-                        .canonicalize()
-                        .unwrap_or_else(|_| self.dir.join(&volume.source))
-                        .to_string_lossy()
-                        .to_string()
-                } else {
-                    volume.source.clone()
-                };
-
-                let expected_bind = format!("{}:{}", source_path, volume.target);
-                if !current_binds.iter().any(|b| b == &expected_bind) {
-                    log::info!(
-                        "Volume binding changed for {}: {}",
-                        self.service.name,
-                        expected_bind
-                    );
-                    return true;
-                }
-            }
-        } else if !self.volume.is_empty() {
-            log::info!("Volume bindings changed for {}", self.service.name);
-            return true;
-        }
-
-        // Check networks
-        if let Some(networks) = inspect_json["NetworkSettings"]["Networks"].as_object() {
-            for network in &self.network {
-                if !networks.contains_key(&network.name) {
-                    log::info!(
-                        "Network changed for {}: {}",
-                        self.service.name,
-                        network.name
-                    );
-                    return true;
-                }
-            }
-        } else if !self.network.is_empty() {
-            log::info!("Networks changed for {}", self.service.name);
-            return true;
-        }
-
-        // Check memory limit
-        if let Some(expected_memory) = &self.service.memory {
-            let current_memory = inspect_json["HostConfig"]["Memory"].as_i64().unwrap_or(0);
-            // Parse expected memory string (e.g., "512m", "2g") to bytes
-            let expected_bytes = parse_memory_to_bytes(expected_memory);
-            if current_memory != expected_bytes {
-                log::info!(
-                    "Memory limit changed for {}: {} -> {}",
-                    self.service.name,
-                    current_memory,
-                    expected_bytes
-                );
-                return true;
-            }
-        } else {
-            // Check if container has a memory limit but we don't expect one
-            let current_memory = inspect_json["HostConfig"]["Memory"].as_i64().unwrap_or(0);
-            if current_memory != 0 {
-                log::info!("Memory limit changed for {} (removed)", self.service.name);
-                return true;
-            }
-        }
-
-        // Check CPU limit
-        if let Some(expected_cpus) = &self.service.cpus {
-            let current_cpus = inspect_json["HostConfig"]["NanoCpus"].as_i64().unwrap_or(0);
-            // Parse expected CPUs string to nano CPUs (1 CPU = 1e9 nano CPUs)
-            let expected_nano_cpus = parse_cpus_to_nano(expected_cpus);
-            if current_cpus != expected_nano_cpus {
-                log::info!(
-                    "CPU limit changed for {}: {} -> {}",
-                    self.service.name,
-                    current_cpus,
-                    expected_nano_cpus
-                );
-                return true;
-            }
-        } else {
-            // Check if container has a CPU limit but we don't expect one
-            let current_cpus = inspect_json["HostConfig"]["NanoCpus"].as_i64().unwrap_or(0);
-            if current_cpus != 0 {
-                log::info!("CPU limit changed for {} (removed)", self.service.name);
-                return true;
-            }
-        }
-
         false
     }
 
-    pub async fn recreate_if_required(&self) {
-        if self.requires_recreate().await {
+    /// Validate if the current container is different from
+    /// this instance or if it does not exist.
+    pub async fn requires_recreate(&self, other: &Self) -> bool {
+        if self.container_does_not_exist().await {
+            return true;
+        }
+        // If self and other are not equal we need to recreate the
+        // container
+        self != other
+    }
+
+    pub async fn recreate_if_required(&self, other: &Self) {
+        if self.requires_recreate(other).await {
             if let Err(e) = self.recreate_container().await {
                 log::error!("Failed to recreate container {}: {}", self.service.name, e);
             }
@@ -606,13 +421,20 @@ impl ServiceInstance {
         if self.dispenser.watch && poll_images {
             // try to update the watchers and check
             // if any of them were updated
-            if let Some(ref image_watcher) = self.image_watcher {
+            if let Some(image_watcher) = &mut self.image_watcher {
                 match image_watcher.update().await {
                     ImageWatcherStatus::Updated => {
                         log::info!(
                             "Image updated for service {}, recreating container...",
                             self.service.name
                         );
+                        if let Err(e) = self.recreate_container().await {
+                            log::error!(
+                                "Failed to recreate container {}: {}",
+                                self.service.name,
+                                e
+                            );
+                        }
                         if let Err(e) = self.run_container().await {
                             log::error!("Failed to run container {}: {}", self.service.name, e);
                         }

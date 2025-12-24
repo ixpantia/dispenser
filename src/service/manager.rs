@@ -48,19 +48,54 @@ impl ServiceMangerConfig {
 }
 
 struct ServiceManagerInner {
+    // These two are craeted together. We can zip them
+    pub service_names: Vec<String>,
     instances: Vec<Arc<Mutex<ServiceInstance>>>,
     networks: Vec<NetworkInstance>,
     delay: Duration,
 }
 
 pub struct ServicesManager {
-    pub service_names: Vec<String>,
-    inner: Mutex<ServiceManagerInner>,
+    inner: ServiceManagerInner,
     cancel_tx: tokio::sync::mpsc::Sender<()>,
     cancel_rx: Mutex<tokio::sync::mpsc::Receiver<()>>,
 }
 
 impl ServicesManager {
+    pub async fn recreate_if_changed_and_cleanup(&self, other: &Self) {
+        for this_instance in &self.inner.instances {
+            let this_instance = this_instance.lock().await;
+            // If the instance is present in other we check for recreation
+            match other
+                .inner
+                .service_names
+                .iter()
+                .zip(other.inner.instances.iter())
+                .filter(|(o, _)| *o == &this_instance.service.name)
+                .next()
+            {
+                Some((_, other_instance)) => {
+                    let other_instance = other_instance.lock().await;
+                    this_instance.recreate_if_required(&other_instance).await;
+                }
+                None => {
+                    // If the new container does not exist in other
+                    // it will be recreated uppon startup
+                }
+            };
+        }
+
+        // Cleanup: remove containers that exist in self but not in other
+        let removed_services = self
+            .inner
+            .service_names
+            .iter()
+            .filter(|s| !other.inner.service_names.contains(s))
+            .cloned()
+            .collect();
+
+        self.remove_containers(removed_services).await;
+    }
     pub async fn from_config(config: ServiceMangerConfig) -> Result<Self, ServiceConfigError> {
         // Get the delay from config (in seconds)
         let delay = Duration::from_secs(config.entrypoint_file.delay);
@@ -141,14 +176,14 @@ impl ServicesManager {
         let cancel_rx = Mutex::new(cancel_rx);
 
         let inner = ServiceManagerInner {
+            service_names,
             instances,
             networks,
             delay,
         };
 
         Ok(ServicesManager {
-            service_names,
-            inner: Mutex::new(inner),
+            inner: inner,
             cancel_tx,
             cancel_rx,
         })
@@ -160,22 +195,23 @@ impl ServicesManager {
 
     pub async fn start_polling(&self) {
         log::info!("Starting polling task");
-        let inner = self.inner.lock().await;
-        let delay = inner.delay;
+        let delay = self.inner.delay;
 
-        let polls = inner
+        let polls = self
+            .inner
             .instances
             .iter()
-            .map(|instance| {
-                let instance = Arc::clone(instance);
-                async move {
-                    let mut last_image_poll = std::time::Instant::now();
-                    let mut init = true;
-                    loop {
-                        let poll_images = last_image_poll.elapsed() >= delay;
-                        if poll_images {
-                            last_image_poll = std::time::Instant::now();
-                        }
+            .cloned()
+            .map(|instance| async move {
+                let mut last_image_poll = std::time::Instant::now();
+                let mut init = true;
+                loop {
+                    let poll_images = last_image_poll.elapsed() >= delay;
+                    if poll_images {
+                        last_image_poll = std::time::Instant::now();
+                    }
+                    // Scope to release the lock
+                    {
                         let poll_start = std::time::Instant::now();
                         let mut instance = instance.lock().await;
                         instance.poll(poll_images, init).await;
@@ -186,8 +222,8 @@ impl ServicesManager {
                             poll_duration
                         );
                         init = false;
-                        tokio::time::sleep(Duration::from_secs(1)).await;
                     }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             })
             .collect::<JoinSet<_>>();
@@ -206,9 +242,8 @@ impl ServicesManager {
     /// This should be called on shutdown to remove non-external networks
     pub async fn cleanup_networks(&self) {
         log::info!("Cleaning up networks");
-        let inner = self.inner.lock().await;
 
-        for network in &inner.networks {
+        for network in &self.inner.networks {
             if let Err(e) = network.remove_network().await {
                 log::warn!("Failed to remove network {}: {}", network.name, e);
             }
@@ -216,8 +251,7 @@ impl ServicesManager {
     }
 
     pub async fn remove_containers(&self, names: Vec<String>) {
-        let instances = self.inner.lock().await;
-        for instance in &instances.instances {
+        for instance in &self.inner.instances {
             let instance = instance.lock().await;
             if names.contains(&instance.service.name) {
                 let _ = instance.stop_container().await;
@@ -225,8 +259,10 @@ impl ServicesManager {
             }
         }
     }
+
     pub async fn shutdown(&self) {
-        self.remove_containers(self.service_names.clone()).await;
+        self.remove_containers(self.inner.service_names.clone())
+            .await;
         self.cleanup_networks().await;
     }
 }

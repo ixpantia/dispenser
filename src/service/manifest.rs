@@ -64,10 +64,17 @@ pub struct Sha256 {
     pub inner: [u8; 64],
 }
 
-#[derive(Clone)]
+impl std::fmt::Debug for Sha256 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let hash_str = std::str::from_utf8(&self.inner).unwrap_or("<invalid utf8>");
+        write!(f, "Sha256(sha256:{})", hash_str)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageWatcher {
     image: Box<str>,
-    last_digest: Arc<Mutex<Option<Sha256>>>,
+    last_digest: Option<Sha256>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -80,19 +87,19 @@ pub enum ImageWatcherStatus {
 impl ImageWatcher {
     pub async fn initialize(image: &str) -> Self {
         log::info!("Initializing watch for {image}");
-        let last_digest = Arc::new(Mutex::new(match get_latest_digest(image).await {
+        let last_digest = match get_latest_digest(image).await {
             Ok(digest) => Some(digest),
             Err(e) => {
                 log::warn!("{e}");
                 None
             }
-        }));
+        };
 
         let image = image.into();
         ImageWatcher { image, last_digest }
     }
-    pub async fn update(&self) -> ImageWatcherStatus {
-        let last_digest = *self.last_digest.lock().await;
+    pub async fn update(&mut self) -> ImageWatcherStatus {
+        let last_digest = self.last_digest;
         let new_sha256 = get_latest_digest(&self.image).await;
         match new_sha256 {
             Err(e) => {
@@ -101,8 +108,7 @@ impl ImageWatcher {
             }
             Ok(new_sha256) if last_digest == Some(new_sha256) => ImageWatcherStatus::NotUpdated,
             Ok(new_sha256) => {
-                let mut last_digest = self.last_digest.lock().await;
-                *last_digest = Some(new_sha256);
+                self.last_digest = Some(new_sha256);
                 log::info!(
                     "Found a new version for {}, update will start soon...",
                     self.image,
