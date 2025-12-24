@@ -59,6 +59,12 @@ async fn main() -> ExitCode {
         }
     };
 
+    if let Err(e) = manager.validate_containers_not_present().await {
+        log::error!("{e}");
+        log::error!("It seems that some of the containers declared already exist. This prevents dispenser from properly managing the life-cycle of these containers. Please remove them and restart dispenser.");
+        std::process::exit(1);
+    }
+
     // Wrap the manager in a Mutex so we can replace it on reload
     let manager_holder = Arc::new(Mutex::new(manager));
 

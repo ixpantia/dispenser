@@ -62,27 +62,79 @@ pub struct ServicesManager {
 }
 
 impl ServicesManager {
+    // We should ensure that the containers don't exist before start up.
+    // This is to make 100% sure that dispenser controls these containers
+    // and they don't exist previously.
+    pub async fn validate_containers_not_present(&self) -> Result<(), String> {
+        let mut join_set = JoinSet::new();
+
+        for instance in &self.inner.instances {
+            let instance_clone = Arc::clone(instance);
+            join_set.spawn(async move {
+                let instance = instance_clone.lock().await;
+                match instance.container_does_not_exist().await {
+                    true => Ok(()),
+                    false => Err(format!(
+                        "Container {} already exists",
+                        instance.service.name
+                    )),
+                }
+            });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(_)) => {
+                    // Container validation succeeded
+                }
+                Ok(Err(e)) => {
+                    log::error!("Container validation failed: {}", e);
+                    return Err(e);
+                }
+                Err(e) => {
+                    let error_msg = format!("Task join error: {}", e);
+                    log::error!("{}", error_msg);
+                    return Err(error_msg);
+                }
+            }
+        }
+
+        Ok(())
+    }
     pub async fn recreate_if_changed_and_cleanup(&self, other: &Self) {
+        let mut join_set = JoinSet::new();
+
         for this_instance in &self.inner.instances {
-            let this_instance = this_instance.lock().await;
-            // If the instance is present in other we check for recreation
-            match other
-                .inner
-                .service_names
-                .iter()
-                .zip(other.inner.instances.iter())
-                .filter(|(o, _)| *o == &this_instance.service.name)
-                .next()
-            {
-                Some((_, other_instance)) => {
-                    let other_instance = other_instance.lock().await;
-                    this_instance.recreate_if_required(&other_instance).await;
-                }
-                None => {
-                    // If the new container does not exist in other
-                    // it will be recreated uppon startup
-                }
-            };
+            let this_instance_clone = Arc::clone(this_instance);
+            let other_service_names = other.inner.service_names.clone();
+            let other_instances = other.inner.instances.clone();
+
+            join_set.spawn(async move {
+                let this_instance = this_instance_clone.lock().await;
+                // If the instance is present in other we check for recreation
+                match other_service_names
+                    .iter()
+                    .zip(other_instances.iter())
+                    .filter(|(o, _)| *o == &this_instance.service.name)
+                    .next()
+                {
+                    Some((_, other_instance)) => {
+                        let other_instance = other_instance.lock().await;
+                        this_instance.recreate_if_required(&other_instance).await;
+                    }
+                    None => {
+                        // If the new container does not exist in other
+                        // it will be recreated uppon startup
+                    }
+                };
+            });
+        }
+
+        // Wait for all recreation tasks to complete
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                log::error!("Failed to recreate instance: {}", e);
+            }
         }
 
         // Cleanup: remove containers that exist in self but not in other
@@ -251,11 +303,24 @@ impl ServicesManager {
     }
 
     pub async fn remove_containers(&self, names: Vec<String>) {
+        let mut join_set = JoinSet::new();
+
         for instance in &self.inner.instances {
-            let instance = instance.lock().await;
-            if names.contains(&instance.service.name) {
-                let _ = instance.stop_container().await;
-                let _ = instance.remove_container().await;
+            let instance_clone = Arc::clone(instance);
+            let names_clone = names.clone();
+
+            join_set.spawn(async move {
+                let instance = instance_clone.lock().await;
+                if names_clone.contains(&instance.service.name) {
+                    let _ = instance.stop_container().await;
+                    let _ = instance.remove_container().await;
+                }
+            });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                log::error!("Failed to remove container: {}", e);
             }
         }
     }
