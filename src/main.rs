@@ -1,7 +1,6 @@
 use std::{process::ExitCode, sync::Arc};
 
 use crate::service::{
-    file::EntrypointFile,
     manager::{ServiceMangerConfig, ServicesManager},
     vars::ServiceConfigError,
 };

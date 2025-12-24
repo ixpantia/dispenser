@@ -1,5 +1,5 @@
 use crate::service::manager::ServicesManager;
-use crate::service::{file::EntrypointFile, manager::ServiceMangerConfig};
+use crate::service::manager::ServiceMangerConfig;
 use signal_hook::{
     consts::{SIGHUP, SIGINT},
     iterator::Signals,
