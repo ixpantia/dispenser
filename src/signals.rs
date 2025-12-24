@@ -8,17 +8,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub async fn remove_unused_services(old_manager: &ServicesManager, new_manager: &ServicesManager) {
-    let removed_services = old_manager
-        .service_names
-        .iter()
-        .filter(|s| !new_manager.service_names.contains(s))
-        .cloned()
-        .collect();
-
-    old_manager.remove_containers(removed_services).await;
-}
-
 pub fn send_signal(signal: crate::cli::Signal) -> ExitCode {
     let pid_file = &crate::cli::get_cli_args().pid_file;
 
@@ -123,7 +112,9 @@ pub async fn reload_manager(
 
     log::info!("Canceling old manager...");
     old_manager.cancel().await;
-    remove_unused_services(&old_manager, &new_manager).await;
+    new_manager
+        .recreate_if_changed_and_cleanup(&old_manager)
+        .await;
 
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
     log::info!("Reload complete");

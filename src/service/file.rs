@@ -4,7 +4,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use super::vars::{render_template, ServiceConfigError, ServiceVarsMaterialized};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntrypointFile {
     #[serde(rename = "service")]
     pub services: Vec<EntrypointFileEntry>,
@@ -34,7 +34,7 @@ impl EntrypointFile {
         Ok(toml::from_str(&rendered_config)?)
     }
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NetworkDeclarationEntry {
     pub name: String,
     #[serde(default = "default_network_driver")]
@@ -61,7 +61,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum NetworkDriver {
     #[default]
     #[serde(alias = "bridge")]
@@ -76,7 +76,7 @@ pub enum NetworkDriver {
     None,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntrypointFileEntry {
     /// Path to the directory where a service.toml file is found.
     /// This toml file should be deserialized into a ServiceFile.
@@ -84,7 +84,7 @@ pub struct EntrypointFileEntry {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServiceFile {
     pub service: ServiceEntry,
     #[serde(default, rename = "port")]
@@ -119,7 +119,7 @@ pub enum Initialize {
     OnTrigger,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DependsOnCondition {
     #[serde(
         alias = "service-started",
@@ -135,7 +135,7 @@ pub enum DependsOnCondition {
     ServiceCompleted,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DispenserConfig {
     pub watch: bool,
     #[serde(default)]
@@ -143,12 +143,12 @@ pub struct DispenserConfig {
     pub cron: Option<Schedule>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Network {
     pub name: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum Restart {
     #[serde(alias = "always")]
     Always,
@@ -165,13 +165,13 @@ pub enum Restart {
     UnlessStopped,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PortEntry {
     pub host: u16,
     pub container: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VolumeEntry {
     pub source: String,
     pub target: String,
@@ -179,7 +179,7 @@ pub struct VolumeEntry {
     pub readonly: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServiceEntry {
     pub name: String,
     pub image: String,
