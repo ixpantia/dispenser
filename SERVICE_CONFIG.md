@@ -346,6 +346,26 @@ cron = "0 3 * * *"  # Every day at 3 AM
 
 See [CRON.md](CRON.md) for more details on cron scheduling.
 
+### `pull` (optional)
+
+Controls when Dispenser should pull the Docker image from the registry. This is useful for ensuring that services (especially scheduled jobs) are always up-to-date with the latest image when they run, without necessarily triggering a redeployment on every image update if `watch` is `false`.
+
+**Valid values:**
+- `always` - Pull the image from the registry every time the container is started or recreated.
+- `on-startup` - Pull the image only if the container does not exist. (default)
+
+**Default:** `on-startup`
+
+```toml
+[dispenser]
+# For a background scheduled job that should always run the latest image,
+# but not necessarily restart if the image updates outside of its schedule.
+watch = false
+initialize = "on-trigger"
+cron = "0 3 * * *" # Every day at 3 AM
+pull = "always"
+```
+
 ## Service Dependencies
 
 The `[depends_on]` section defines dependencies between services.
