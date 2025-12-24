@@ -135,12 +135,23 @@ pub enum DependsOnCondition {
     ServiceCompleted,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum PullOptions {
+    #[serde(alias = "always")]
+    Always,
+    #[default]
+    #[serde(alias = "on-startup", alias = "on_startup", alias = "onstartup")]
+    OnStartup,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DispenserConfig {
     pub watch: bool,
     #[serde(default)]
     pub initialize: Initialize,
     pub cron: Option<Schedule>,
+    #[serde(default)]
+    pub pull: PullOptions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -5,8 +5,8 @@ use cron::Schedule;
 
 use crate::service::{
     file::{
-        DependsOnCondition, DispenserConfig, Initialize, Network, PortEntry, Restart, ServiceEntry,
-        VolumeEntry,
+        DependsOnCondition, DispenserConfig, Initialize, Network, PortEntry, PullOptions, Restart,
+        ServiceEntry, VolumeEntry,
     },
     manifest::{ImageWatcher, ImageWatcherStatus},
 };
@@ -148,9 +148,7 @@ impl ServiceInstance {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
-        // If we are trying to run a container that does exists,
-        // create it!
-        if self.container_does_not_exist().await {
+        if self.dispenser.pull == PullOptions::Always || self.container_does_not_exist().await {
             self.recreate_container().await?;
         }
 
