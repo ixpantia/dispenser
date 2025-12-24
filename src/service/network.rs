@@ -130,8 +130,7 @@ impl NetworkInstance {
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             log::error!("Failed to create network {}: {}", self.name, error_msg);
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(std::io::Error::other(
                 format!("Failed to create network: {}", error_msg),
             ))
         }

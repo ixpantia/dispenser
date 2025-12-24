@@ -28,7 +28,7 @@ impl EntrypointFile {
 
         // Render the template with variables
         let rendered_config =
-            render_template(&config, &vars).map_err(|e| ServiceConfigError::Template((path, e)))?;
+            render_template(&config, vars).map_err(|e| ServiceConfigError::Template((path, e)))?;
 
         // Parse the rendered config as TOML
         Ok(toml::from_str(&rendered_config)?)

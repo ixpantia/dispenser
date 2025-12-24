@@ -56,35 +56,6 @@ pub enum ContainerStatus {
     NotFound,
 }
 
-/// Parse memory string (e.g., "512m", "2g") to bytes
-fn parse_memory_to_bytes(memory_str: &str) -> i64 {
-    let memory_str = memory_str.trim().to_lowercase();
-    let (value, unit) = if memory_str.ends_with("k") || memory_str.ends_with("kb") {
-        let val = memory_str.trim_end_matches("kb").trim_end_matches("k");
-        (val, 1024i64)
-    } else if memory_str.ends_with("m") || memory_str.ends_with("mb") {
-        let val = memory_str.trim_end_matches("mb").trim_end_matches("m");
-        (val, 1024i64 * 1024)
-    } else if memory_str.ends_with("g") || memory_str.ends_with("gb") {
-        let val = memory_str.trim_end_matches("gb").trim_end_matches("g");
-        (val, 1024i64 * 1024 * 1024)
-    } else if memory_str.ends_with("b") {
-        let val = memory_str.trim_end_matches("b");
-        (val, 1i64)
-    } else {
-        // Assume bytes if no unit
-        (memory_str.as_str(), 1i64)
-    };
-
-    value.parse::<i64>().unwrap_or(0) * unit
-}
-
-/// Parse CPU string (e.g., "1.5", "2") to nano CPUs (1 CPU = 1e9 nano CPUs)
-fn parse_cpus_to_nano(cpus_str: &str) -> i64 {
-    let cpus: f64 = cpus_str.trim().parse().unwrap_or(0.0);
-    (cpus * 1_000_000_000.0) as i64
-}
-
 /// This function queries the status of a container
 /// Returns whether it's up, exited successfully (0 exit status), or failed
 async fn get_container_status(container_name: &str) -> Result<ContainerStatus, std::io::Error> {
@@ -167,8 +138,7 @@ impl ServiceInstance {
                 self.service.name,
                 error_msg
             );
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(std::io::Error::other(
                 format!("Failed to start container: {}", error_msg),
             ))
         }
@@ -186,8 +156,7 @@ impl ServiceInstance {
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             log::error!("Failed to pull image {}: {}", self.service.image, error_msg);
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(std::io::Error::other(
                 format!("Failed to pull image: {}", error_msg),
             ))
         }
@@ -210,8 +179,7 @@ impl ServiceInstance {
                 self.service.name,
                 error_msg
             );
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(std::io::Error::other(
                 format!("Failed to warn container: {}", error_msg),
             ))
         }
@@ -234,8 +202,7 @@ impl ServiceInstance {
                 self.service.name,
                 error_msg
             );
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(std::io::Error::other(
                 format!("Failed to remove container: {}", error_msg),
             ))
         }
@@ -332,8 +299,7 @@ impl ServiceInstance {
                 self.service.name,
                 error_msg
             );
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(std::io::Error::other(
                 format!("Failed to create container: {}", error_msg),
             ))
         }

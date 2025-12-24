@@ -177,7 +177,7 @@ pub fn render_template(
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
 
     let template = env.template_from_str(template_str)?;
-    Ok(template.render(vars)?)
+    template.render(vars)
 }
 
 #[cfg(test)]

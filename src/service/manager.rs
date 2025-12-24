@@ -1,6 +1,5 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use futures_util::future;
 use tokio::{sync::Mutex, task::JoinSet};
 
 use crate::service::{
@@ -115,8 +114,7 @@ impl ServicesManager {
                 match other_service_names
                     .iter()
                     .zip(other_instances.iter())
-                    .filter(|(o, _)| *o == &this_instance.service.name)
-                    .next()
+                    .find(|(o, _)| *o == &this_instance.service.name)
                 {
                     Some((_, other_instance)) => {
                         let other_instance = other_instance.lock().await;
@@ -184,11 +182,7 @@ impl ServicesManager {
                 };
 
                 // Create cron watcher if cron schedule is specified
-                let cron_watcher = service_file
-                    .dispenser
-                    .cron
-                    .as_ref()
-                    .map(|schedule| CronWatcher::new(schedule));
+                let cron_watcher = service_file.dispenser.cron.as_ref().map(CronWatcher::new);
 
                 let service_name = service_file.service.name.clone();
 
@@ -235,14 +229,14 @@ impl ServicesManager {
         };
 
         Ok(ServicesManager {
-            inner: inner,
+            inner,
             cancel_tx,
             cancel_rx,
         })
     }
 
     pub async fn cancel(&self) {
-        let _ = self.cancel_tx.send(());
+        let _ = self.cancel_tx.send(()).await;
     }
 
     pub async fn start_polling(&self) {
