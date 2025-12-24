@@ -32,7 +32,11 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools just
+          sudo apt-get install -y musl-tools
+
+      - uses: extractions/setup-just@v3
+        with:
+          just-version: 1.42.4
 
       - name: Build .deb package
         run: just build-deb
@@ -69,7 +73,11 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools rpm just
+          sudo apt-get install -y musl-tools rpm
+
+      - uses: extractions/setup-just@v3
+        with:
+          just-version: 1.42.4
 
       - name: Build .rpm package
         run: just build-rpm
