@@ -1,7 +1,7 @@
-use crate::service::manager::ServicesManager;
 use crate::service::manager::ServiceMangerConfig;
+use crate::service::manager::ServicesManager;
 use signal_hook::{
-    consts::{SIGHUP, SIGINT},
+    consts::{SIGHUP, SIGINT, SIGTERM},
     iterator::Signals,
 };
 use std::process::ExitCode;
@@ -40,7 +40,7 @@ pub fn send_signal(signal: crate::cli::Signal) -> ExitCode {
 /// this program?
 pub fn handle_sigint(sigint_signal: Arc<tokio::sync::Notify>) {
     let mut signals =
-        Signals::new([SIGINT]).expect("No signals :(. This really should never happen");
+        Signals::new([SIGINT, SIGTERM]).expect("No signals :(. This really should never happen");
 
     std::thread::spawn(move || {
         for _ in signals.forever() {
