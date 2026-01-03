@@ -1,6 +1,8 @@
-use tokio::process::Command;
-
+use bollard::query_parameters::{CreateImageOptions, CreateImageOptionsBuilder};
+use futures_util::StreamExt;
 use thiserror::Error;
+
+use crate::service::docker::get_docker;
 
 pub type Result<T> = std::result::Result<T, ImageWatcherError>;
 
@@ -12,49 +14,10 @@ pub enum ImageWatcherError {
     SerdeJsonError(#[from] serde_json::Error),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Docker API error: {0}")]
+    DockerApiError(#[from] bollard::errors::Error),
     #[error("Docker command failed: {0}")]
     DockerCommandFailed(String),
-}
-
-#[derive(serde::Deserialize)]
-pub struct DockerInspectResponse {
-    #[serde(rename = "RepoDigests")]
-    repo_digests: Option<Vec<String>>,
-    #[serde(rename = "Id")]
-    id: Option<String>,
-}
-
-impl DockerInspectResponse {
-    pub fn get_digest(&self) -> Result<Sha256> {
-        // Try to get digest from RepoDigests first
-        if let Some(digests) = self.repo_digests.as_ref() {
-            if let Some(first_digest) = digests.first() {
-                // RepoDigests format is like "repository@sha256:..."
-                if let Some(digest_part) = first_digest.split('@').nth(1) {
-                    let hash = digest_part.strip_prefix("sha256:").ok_or_else(|| {
-                        ImageWatcherError::InvalidDigestPrefix(digest_part.to_string())
-                    })?;
-                    let mut inner = [0u8; 64];
-                    inner.copy_from_slice(hash.as_bytes());
-                    return Ok(Sha256 { inner });
-                }
-            }
-        }
-
-        // Fallback to Id if RepoDigests is not available
-        if let Some(id) = self.id.as_ref() {
-            let hash = id
-                .strip_prefix("sha256:")
-                .ok_or_else(|| ImageWatcherError::InvalidDigestPrefix(id.clone()))?;
-            let mut inner = [0u8; 64];
-            inner.copy_from_slice(hash.as_bytes());
-            return Ok(Sha256 { inner });
-        }
-
-        Err(ImageWatcherError::DockerCommandFailed(
-            "No digest found in inspect output".to_string(),
-        ))
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -118,37 +81,91 @@ impl ImageWatcher {
     }
 }
 
+/// Parse an image reference into (image, tag) components
+fn parse_image_reference(image: &str) -> (&str, &str) {
+    // Handle digest references (image@sha256:...)
+    if let Some(at_pos) = image.find('@') {
+        return (&image[..at_pos], &image[at_pos..]);
+    }
+
+    // Handle tag references (image:tag)
+    // Need to be careful with registry URLs that contain port numbers
+    // e.g., localhost:5000/myimage:tag
+    if let Some(colon_pos) = image.rfind(':') {
+        // Check if the colon is part of a port number in the registry URL
+        let after_colon = &image[colon_pos + 1..];
+        // If there's a slash after the colon, it's a port number, not a tag
+        if !after_colon.contains('/') {
+            return (&image[..colon_pos], after_colon);
+        }
+    }
+
+    // No tag specified, use "latest"
+    (image, "latest")
+}
+
 async fn get_latest_digest(image: &str) -> Result<Sha256> {
-    // First, pull the latest image
-    let pull_result = Command::new("docker")
-        .args(["pull"])
-        .arg(image)
-        .output()
-        .await?;
+    let docker = get_docker();
 
-    if !pull_result.status.success() {
-        return Err(ImageWatcherError::DockerCommandFailed(
-            String::from_utf8_lossy(&pull_result.stderr).to_string(),
-        ));
+    // Parse image name and tag
+    let (image_name, tag) = parse_image_reference(image);
+
+    // Pull the latest image using bollard
+    let options: CreateImageOptions = CreateImageOptionsBuilder::new()
+        .from_image(image_name)
+        .tag(tag)
+        .build();
+
+    let mut stream = docker.create_image(Some(options), None, None);
+
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(info) => {
+                if let Some(status) = info.status {
+                    log::debug!("Pull status: {}", status);
+                }
+            }
+            Err(e) => {
+                return Err(ImageWatcherError::DockerApiError(e));
+            }
+        }
     }
 
-    // Then, inspect the image to get its digest
-    let inspect_result = Command::new("docker")
-        .args(["inspect"])
-        .arg(image)
-        .output()
-        .await?;
+    // Inspect the image to get its digest
+    let inspect = docker.inspect_image(image).await?;
 
-    if !inspect_result.status.success() {
-        return Err(ImageWatcherError::DockerCommandFailed(
-            String::from_utf8_lossy(&inspect_result.stderr).to_string(),
-        ));
+    // Try to get digest from RepoDigests first
+    if let Some(repo_digests) = inspect.repo_digests {
+        if let Some(first_digest) = repo_digests.first() {
+            // RepoDigests format is like "repository@sha256:..."
+            if let Some(digest_part) = first_digest.split('@').nth(1) {
+                let hash = digest_part.strip_prefix("sha256:").ok_or_else(|| {
+                    ImageWatcherError::InvalidDigestPrefix(digest_part.to_string())
+                })?;
+                let mut inner = [0u8; 64];
+                let hash_bytes = hash.as_bytes();
+                if hash_bytes.len() >= 64 {
+                    inner.copy_from_slice(&hash_bytes[..64]);
+                    return Ok(Sha256 { inner });
+                }
+            }
+        }
     }
 
-    let val: Vec<DockerInspectResponse> = serde_json::from_slice(&inspect_result.stdout)?;
-    val.first()
-        .ok_or_else(|| {
-            ImageWatcherError::DockerCommandFailed("Empty inspect response".to_string())
-        })?
-        .get_digest()
+    // Fallback to Id if RepoDigests is not available
+    if let Some(id) = inspect.id {
+        let hash = id
+            .strip_prefix("sha256:")
+            .ok_or_else(|| ImageWatcherError::InvalidDigestPrefix(id.clone()))?;
+        let mut inner = [0u8; 64];
+        let hash_bytes = hash.as_bytes();
+        if hash_bytes.len() >= 64 {
+            inner.copy_from_slice(&hash_bytes[..64]);
+            return Ok(Sha256 { inner });
+        }
+    }
+
+    Err(ImageWatcherError::DockerCommandFailed(
+        "No digest found in inspect output".to_string(),
+    ))
 }

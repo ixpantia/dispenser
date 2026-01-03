@@ -1,5 +1,6 @@
 use minijinja::Environment;
 use serde::{Deserialize, Serialize};
+use std::string::FromUtf8Error;
 use std::{collections::HashMap, path::Path, path::PathBuf};
 
 use crate::secrets;
@@ -160,6 +161,16 @@ pub enum ServiceConfigError {
     GcpSecretFetch(#[from] google_cloud_secretmanager_v1::Error),
     #[error("GCP Client error: {0}")]
     GcpClient(#[from] google_cloud_gax::client_builder::Error),
+    #[error("Docker API error: {0}")]
+    DockerApi(#[from] bollard::errors::Error),
+    #[error("Network not found: {0}")]
+    NetworkNotFound(String),
+}
+
+impl From<FromUtf8Error> for ServiceConfigError {
+    fn from(value: FromUtf8Error) -> Self {
+        Self::Utf8(value.utf8_error())
+    }
 }
 
 pub fn render_template(

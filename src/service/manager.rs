@@ -163,7 +163,7 @@ impl ServicesManager {
         for network in &networks {
             if let Err(e) = network.ensure_exists().await {
                 log::error!("Failed to ensure network {} exists: {}", network.name, e);
-                return Err(ServiceConfigError::Io(e));
+                return Err(e);
             }
         }
 

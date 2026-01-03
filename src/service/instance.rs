@@ -1,9 +1,22 @@
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
+use bollard::models::{
+    ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, PortBinding,
+    RestartPolicy, RestartPolicyNameEnum,
+};
+use bollard::query_parameters::{
+    CreateContainerOptions, CreateContainerOptionsBuilder, CreateImageOptions,
+    CreateImageOptionsBuilder, InspectContainerOptions, InspectContainerOptionsBuilder,
+    RemoveContainerOptions, RemoveContainerOptionsBuilder, StartContainerOptions,
+    StartContainerOptionsBuilder, StopContainerOptions, StopContainerOptionsBuilder,
+};
 use chrono::{DateTime, Local};
 use cron::Schedule;
+use futures_util::StreamExt;
 
+use crate::service::vars::ServiceConfigError;
 use crate::service::{
+    docker::get_docker,
     file::{
         DependsOnCondition, DispenserConfig, Initialize, Network, PortEntry, PullOptions, Restart,
         ServiceEntry, VolumeEntry,
@@ -56,38 +69,36 @@ pub enum ContainerStatus {
     NotFound,
 }
 
-/// This function queries the status of a container
+/// This function queries the status of a container using bollard
 /// Returns whether it's up, exited successfully (0 exit status), or failed
-async fn get_container_status(container_name: &str) -> Result<ContainerStatus, std::io::Error> {
-    let output = tokio::process::Command::new("docker")
-        .args([
-            "inspect",
-            "--format",
-            "{{.State.Status}},{{.State.ExitCode}}",
-            container_name,
-        ])
-        .output()
-        .await?;
+async fn get_container_status(container_name: &str) -> Result<ContainerStatus, ServiceConfigError> {
+    let docker = get_docker();
 
-    if !output.status.success() {
-        return Ok(ContainerStatus::NotFound);
-    }
+    let options: InspectContainerOptions = InspectContainerOptionsBuilder::new().build();
 
-    let status_str = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = status_str.trim().split(',').collect();
-
-    match parts.as_slice() {
-        [status, _exit_code] if *status == "running" => Ok(ContainerStatus::Running),
-        [_, exit_code] => {
-            let code = exit_code.parse::<i32>().unwrap_or(-1);
-            Ok(ContainerStatus::Exited(code))
+    match docker
+        .inspect_container(container_name, Some(options))
+        .await
+    {
+        Ok(info) => {
+            if let Some(state) = info.state {
+                if state.running.unwrap_or(false) {
+                    return Ok(ContainerStatus::Running);
+                }
+                let exit_code = state.exit_code.unwrap_or(-1) as i32;
+                return Ok(ContainerStatus::Exited(exit_code));
+            }
+            Ok(ContainerStatus::NotFound)
         }
-        _ => Ok(ContainerStatus::NotFound),
+        Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => Ok(ContainerStatus::NotFound),
+        Err(e) => Err(ServiceConfigError::DockerApi(e)),
     }
 }
 
 impl ServiceInstance {
-    pub async fn run_container(&self) -> Result<(), std::io::Error> {
+    pub async fn run_container(&self) -> Result<(), ServiceConfigError> {
         let mut depends_on_conditions = Vec::with_capacity(self.depends_on.len());
         loop {
             for (container, condition) in &self.depends_on {
@@ -123,189 +134,251 @@ impl ServiceInstance {
             self.recreate_container().await?;
         }
 
-        let output = tokio::process::Command::new("docker")
-            .args(["start", &self.service.name])
-            .output()
-            .await?;
+        let docker = get_docker();
 
-        if output.status.success() {
-            log::info!("Container {} started successfully", self.service.name);
-            Ok(())
-        } else {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            log::error!(
-                "Failed to start container {}: {}",
-                self.service.name,
-                error_msg
-            );
-            Err(std::io::Error::other(
-                format!("Failed to start container: {}", error_msg),
-            ))
-        }
+        let options: StartContainerOptions = StartContainerOptionsBuilder::new().build();
+
+        docker
+            .start_container(&self.service.name, Some(options))
+            .await
+            .inspect_err(|e| {
+                log::error!("Failed to start container {}: {}", self.service.name, e);
+            })?;
+
+        log::info!("Container {} started successfully", self.service.name);
+        Ok(())
     }
-    pub async fn pull_image(&self) -> Result<(), std::io::Error> {
+
+    pub async fn pull_image(&self) -> Result<(), ServiceConfigError> {
         log::info!("Pulling image: {}", self.service.image);
-        let output = tokio::process::Command::new("docker")
-            .args(["pull", &self.service.image])
-            .output()
-            .await?;
+        let docker = get_docker();
 
-        if output.status.success() {
-            log::info!("Image {} pulled successfully", self.service.image);
-            Ok(())
-        } else {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            log::error!("Failed to pull image {}: {}", self.service.image, error_msg);
-            Err(std::io::Error::other(
-                format!("Failed to pull image: {}", error_msg),
-            ))
+        // Parse image name and tag
+        let (image, tag) = parse_image_reference(&self.service.image);
+
+        let options: CreateImageOptions = CreateImageOptionsBuilder::new()
+            .from_image(image)
+            .tag(tag)
+            .build();
+
+        let mut stream = docker.create_image(Some(options), None, None);
+
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(info) => {
+                    if let Some(status) = info.status {
+                        log::debug!("Pull status: {}", status);
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to pull image {}: {}", self.service.image, e);
+                    return Err(ServiceConfigError::DockerApi(e));
+                }
+            }
         }
+
+        log::info!("Image {} pulled successfully", self.service.image);
+        Ok(())
     }
 
-    pub async fn stop_container(&self) -> Result<(), std::io::Error> {
+    pub async fn stop_container(&self) -> Result<(), ServiceConfigError> {
         log::info!("Stopping container: {}", self.service.name);
-        let output = tokio::process::Command::new("docker")
-            .args(["stop", &self.service.name])
-            .output()
-            .await?;
+        let docker = get_docker();
 
-        if output.status.success() {
-            log::info!("Container {} stopped successfully", self.service.name);
-            Ok(())
-        } else {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            log::warn!(
-                "Failed to stop container {}: {}",
-                self.service.name,
-                error_msg
-            );
-            Err(std::io::Error::other(
-                format!("Failed to warn container: {}", error_msg),
-            ))
+        let options: StopContainerOptions = StopContainerOptionsBuilder::new().t(10).build();
+
+        match docker
+            .stop_container(&self.service.name, Some(options))
+            .await
+        {
+            Ok(_) => {
+                log::info!("Container {} stopped successfully", self.service.name);
+                Ok(())
+            }
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {
+                log::warn!("Container {} not found, skipping stop", self.service.name);
+                Ok(())
+            }
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 304, ..
+            }) => {
+                log::info!("Container {} already stopped", self.service.name);
+                Ok(())
+            }
+            Err(e) => {
+                log::warn!("Failed to stop container {}: {}", self.service.name, e);
+                Err(ServiceConfigError::DockerApi(e))
+            }
         }
     }
 
-    pub async fn remove_container(&self) -> Result<(), std::io::Error> {
+    pub async fn remove_container(&self) -> Result<(), ServiceConfigError> {
         log::info!("Removing container: {}", self.service.name);
-        let output = tokio::process::Command::new("docker")
-            .args(["rm", "-f", &self.service.name])
-            .output()
-            .await?;
+        let docker = get_docker();
 
-        if output.status.success() {
-            log::info!("Container {} removed successfully", self.service.name);
-            Ok(())
-        } else {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            log::error!(
-                "Failed to remove container {}: {}",
-                self.service.name,
-                error_msg
-            );
-            Err(std::io::Error::other(
-                format!("Failed to remove container: {}", error_msg),
-            ))
+        let options: RemoveContainerOptions =
+            RemoveContainerOptionsBuilder::new().force(true).build();
+
+        match docker
+            .remove_container(&self.service.name, Some(options))
+            .await
+        {
+            Ok(_) => {
+                log::info!("Container {} removed successfully", self.service.name);
+                Ok(())
+            }
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {
+                log::info!(
+                    "Container {} not found, skipping removal",
+                    self.service.name
+                );
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("Failed to remove container {}: {}", self.service.name, e);
+                Err(ServiceConfigError::DockerApi(e))
+            }
         }
     }
 
-    pub async fn create_container(&self) -> Result<(), std::io::Error> {
+    pub async fn create_container(&self) -> Result<(), ServiceConfigError> {
         log::info!("Creating container: {}", self.service.name);
+        let docker = get_docker();
 
-        let mut cmd = tokio::process::Command::new("docker");
-        cmd.arg("create");
-        cmd.args(["--name", &self.service.name]);
+        // Build port bindings
+        let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+        let mut exposed_ports: HashMap<String, HashMap<(), ()>> = HashMap::new();
 
-        // Add restart policy
-        match self.restart {
-            Restart::Always => cmd.args(["--restart", "always"]),
-            Restart::No => cmd.args(["--restart", "no"]),
-            Restart::OnFailure => cmd.args(["--restart", "on-failure"]),
-            Restart::UnlessStopped => cmd.args(["--restart", "unless-stopped"]),
+        for port in &self.ports {
+            let container_port = format!("{}/tcp", port.container);
+            exposed_ports.insert(container_port.clone(), HashMap::new());
+            port_bindings.insert(
+                container_port,
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(port.host.to_string()),
+                }]),
+            );
+        }
+
+        // Build volume bindings
+        let binds: Vec<String> = self
+            .volume
+            .iter()
+            .map(|v| {
+                let source = v.normalized_source(&self.dir)?;
+                if v.readonly {
+                    Ok(format!("{}:{}:ro", source, v.target))
+                } else {
+                    Ok(format!("{}:{}", source, v.target))
+                }
+            })
+            .collect::<Result<_, ServiceConfigError>>()?;
+
+        // Build environment variables
+        let env: Vec<String> = self
+            .env
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+
+        // Build restart policy
+        let restart_policy = match self.restart {
+            Restart::Always => Some(RestartPolicy {
+                name: Some(RestartPolicyNameEnum::ALWAYS),
+                maximum_retry_count: None,
+            }),
+            Restart::No => Some(RestartPolicy {
+                name: Some(RestartPolicyNameEnum::NO),
+                maximum_retry_count: None,
+            }),
+            Restart::OnFailure => Some(RestartPolicy {
+                name: Some(RestartPolicyNameEnum::ON_FAILURE),
+                maximum_retry_count: None,
+            }),
+            Restart::UnlessStopped => Some(RestartPolicy {
+                name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
+                maximum_retry_count: None,
+            }),
         };
 
-        // Add port mappings
-        for port in &self.ports {
-            cmd.args(["-p", &format!("{}:{}", port.host, port.container)]);
-        }
+        // Parse memory limit
+        let memory = self.service.memory.as_ref().map(|m| parse_memory_limit(m));
 
-        // Add volume mappings
-        for volume in &self.volume {
-            let mount_str = if volume.readonly {
-                format!("{}:{}:ro", volume.source, volume.target)
+        // Parse CPU limit (convert to nano CPUs)
+        let nano_cpus = self.service.cpus.as_ref().map(|c| {
+            let cpus: f64 = c.parse().unwrap_or(1.0);
+            (cpus * 1_000_000_000.0) as i64
+        });
+
+        // Build host config
+        let host_config = HostConfig {
+            binds: if binds.is_empty() { None } else { Some(binds) },
+            port_bindings: if port_bindings.is_empty() {
+                None
             } else {
-                format!("{}:{}", volume.source, volume.target)
+                Some(port_bindings)
+            },
+            restart_policy,
+            memory,
+            nano_cpus,
+            network_mode: self.network.first().map(|n| n.name.clone()),
+            ..Default::default()
+        };
+
+        // Build container config
+        let config = ContainerCreateBody {
+            image: Some(self.service.image.clone()),
+            hostname: self.service.hostname.clone(),
+            user: self.service.user.clone(),
+            working_dir: self.service.working_dir.clone(),
+            env: if env.is_empty() { None } else { Some(env) },
+            cmd: self.service.command.clone(),
+            entrypoint: self.service.entrypoint.clone(),
+            exposed_ports: if exposed_ports.is_empty() {
+                None
+            } else {
+                Some(exposed_ports)
+            },
+            host_config: Some(host_config),
+            ..Default::default()
+        };
+
+        let options: CreateContainerOptions = CreateContainerOptionsBuilder::new()
+            .name(&self.service.name)
+            .build();
+
+        docker.create_container(Some(options), config).await?;
+
+        // Connect to additional networks (first one is already connected via network_mode)
+        for network in self.network.iter().skip(1) {
+            let connect_request = NetworkConnectRequest {
+                container: Some(self.service.name.clone()),
+                endpoint_config: Some(EndpointSettings::default()),
             };
-            cmd.args(["-v", &mount_str]);
+
+            docker
+                .connect_network(&network.name, connect_request)
+                .await
+                .inspect_err(|e| {
+                    log::warn!(
+                        "Failed to connect container {} to network {}: {}",
+                        self.service.name,
+                        network.name,
+                        e
+                    );
+                })?;
         }
 
-        // Add environment variables
-        for (key, value) in &self.env {
-            cmd.args(["-e", &format!("{}={}", key, value)]);
-        }
-
-        // Add networks
-        for network in &self.network {
-            cmd.args(["--network", &network.name]);
-        }
-
-        // Add resource limits
-        if let Some(memory) = &self.service.memory {
-            cmd.args(["--memory", memory]);
-        }
-        if let Some(cpus) = &self.service.cpus {
-            cmd.args(["--cpus", cpus]);
-        }
-
-        // Add working directory
-        if let Some(working_dir) = &self.service.working_dir {
-            cmd.args(["--workdir", working_dir]);
-        }
-
-        // Add user
-        if let Some(user) = &self.service.user {
-            cmd.args(["--user", user]);
-        }
-
-        // Add hostname
-        if let Some(hostname) = &self.service.hostname {
-            cmd.args(["--hostname", hostname]);
-        }
-
-        // Add entrypoint if specified
-        if let Some(entrypoint) = &self.service.entrypoint {
-            cmd.arg("--entrypoint");
-            cmd.arg(entrypoint.join(" "));
-        }
-
-        // Add the image
-        cmd.arg(&self.service.image);
-
-        if let Some(command) = &self.service.command {
-            cmd.args(command);
-        }
-
-        // Set the directory for the command
-        cmd.current_dir(&self.dir);
-
-        let output = cmd.output().await?;
-
-        if output.status.success() {
-            log::info!("Container {} created successfully", self.service.name);
-            Ok(())
-        } else {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            log::error!(
-                "Failed to create container {}: {}",
-                self.service.name,
-                error_msg
-            );
-            Err(std::io::Error::other(
-                format!("Failed to create container: {}", error_msg),
-            ))
-        }
+        log::info!("Container {} created successfully", self.service.name);
+        Ok(())
     }
 
-    pub async fn recreate_container(&self) -> Result<(), std::io::Error> {
+    pub async fn recreate_container(&self) -> Result<(), ServiceConfigError> {
         self.pull_image().await?;
         let _ = self.stop_container().await;
         let _ = self.remove_container().await;
@@ -314,27 +387,29 @@ impl ServiceInstance {
     }
 
     pub async fn container_does_not_exist(&self) -> bool {
-        // Get the container inspection data
-        let output = match tokio::process::Command::new("docker")
-            .args(["inspect", "--format", "{{json .}}", &self.service.name])
-            .output()
+        let docker = get_docker();
+
+        let options: InspectContainerOptions = InspectContainerOptionsBuilder::new().build();
+
+        match docker
+            .inspect_container(&self.service.name, Some(options))
             .await
         {
-            Ok(output) => output,
+            Ok(_) => false,
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {
+                log::info!(
+                    "Container {} does not exist, needs creation",
+                    self.service.name
+                );
+                true
+            }
             Err(e) => {
                 log::warn!("Failed to inspect container {}: {}", self.service.name, e);
-                return true; // If we can't inspect, assume recreate is needed
+                true // If we can't inspect, assume recreate is needed
             }
-        };
-
-        if !output.status.success() {
-            log::info!(
-                "Container {} does not exist, needs creation",
-                self.service.name
-            );
-            return true;
         }
-        false
     }
 
     /// Validate if the current container is different from
@@ -411,4 +486,45 @@ impl ServiceInstance {
             }
         }
     }
+}
+
+/// Parse an image reference into (image, tag) components
+fn parse_image_reference(image: &str) -> (&str, &str) {
+    // Handle digest references (image@sha256:...)
+    if let Some(at_pos) = image.find('@') {
+        return (&image[..at_pos], &image[at_pos..]);
+    }
+
+    // Handle tag references (image:tag)
+    // Need to be careful with registry URLs that contain port numbers
+    // e.g., localhost:5000/myimage:tag
+    if let Some(colon_pos) = image.rfind(':') {
+        // Check if the colon is part of a port number in the registry URL
+        let after_colon = &image[colon_pos + 1..];
+        // If there's a slash after the colon, it's a port number, not a tag
+        if !after_colon.contains('/') {
+            return (&image[..colon_pos], after_colon);
+        }
+    }
+
+    // No tag specified, use "latest"
+    (image, "latest")
+}
+
+/// Parse memory limit string (e.g., "512m", "2g") to bytes
+fn parse_memory_limit(limit: &str) -> i64 {
+    let limit = limit.trim().to_lowercase();
+    let (num_str, multiplier) = if limit.ends_with("g") {
+        (&limit[..limit.len() - 1], 1024 * 1024 * 1024)
+    } else if limit.ends_with("m") {
+        (&limit[..limit.len() - 1], 1024 * 1024)
+    } else if limit.ends_with("k") {
+        (&limit[..limit.len() - 1], 1024)
+    } else if limit.ends_with("b") {
+        (&limit[..limit.len() - 1], 1)
+    } else {
+        (limit.as_str(), 1)
+    };
+
+    num_str.parse::<i64>().unwrap_or(0) * multiplier
 }

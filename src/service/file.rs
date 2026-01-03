@@ -1,6 +1,9 @@
 use cron::Schedule;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use super::vars::{render_template, ServiceConfigError, ServiceVarsMaterialized};
 
@@ -182,12 +185,58 @@ pub struct PortEntry {
     pub container: u16,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum VolumeSource {
+    Name(String),
+    Path(PathBuf),
+}
+
+impl<'de> Deserialize<'de> for VolumeSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        if raw.contains('/') {
+            return Ok(Self::Path(PathBuf::from(raw)));
+        }
+        Ok(Self::Name(raw))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VolumeEntry {
-    pub source: String,
+    pub source: VolumeSource,
     pub target: String,
     #[serde(default)]
     pub readonly: bool,
+}
+
+impl VolumeEntry {
+    // If the source is a path, returns the
+    // absolute path to the path entry relative to
+    // the `service.toml` file. If it's a volume name
+    // it returns the volume name directly.
+    pub fn normalized_source(&self, wd: &Path) -> Result<String, ServiceConfigError> {
+        // Since this type is just a string behind the scenes
+        // we can unwrap and guarantee utf-8
+        match &self.source {
+            VolumeSource::Path(path) => {
+                if Path::new(path).is_absolute() {
+                    return Ok(String::from_utf8(
+                        path.clone().into_os_string().into_encoded_bytes(),
+                    )?);
+                }
+                Ok(String::from_utf8(
+                    std::path::absolute(wd.join(path))?
+                        .into_os_string()
+                        .into_encoded_bytes(),
+                )?)
+            }
+            VolumeSource::Name(name) => Ok(name.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
