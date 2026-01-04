@@ -1,8 +1,8 @@
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use bollard::models::{
-    ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, PortBinding,
-    RestartPolicy, RestartPolicyNameEnum,
+    ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, NetworkingConfig,
+    PortBinding, RestartPolicy, RestartPolicyNameEnum,
 };
 use bollard::query_parameters::{
     CreateContainerOptions, CreateContainerOptionsBuilder, CreateImageOptions,
@@ -14,6 +14,7 @@ use chrono::{DateTime, Local};
 use cron::Schedule;
 use futures_util::StreamExt;
 
+use crate::service::network::get_container_ip;
 use crate::service::vars::ServiceConfigError;
 use crate::service::{
     docker::get_docker,
@@ -22,6 +23,7 @@ use crate::service::{
         ServiceEntry, VolumeEntry,
     },
     manifest::{ImageWatcher, ImageWatcherStatus},
+    network::DEFAULT_NETWORK_NAME,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +148,7 @@ impl ServiceInstance {
             })?;
 
         log::info!("Container {} started successfully", self.service.name);
+
         Ok(())
     }
 
@@ -316,6 +319,7 @@ impl ServiceInstance {
         });
 
         // Build host config
+        // Always connect to the default dispenser network first
         let host_config = HostConfig {
             binds: if binds.is_empty() { None } else { Some(binds) },
             port_bindings: if port_bindings.is_empty() {
@@ -326,8 +330,19 @@ impl ServiceInstance {
             restart_policy,
             memory,
             nano_cpus,
-            network_mode: self.network.first().map(|n| n.name.clone()),
+            network_mode: Some(DEFAULT_NETWORK_NAME.to_string()),
             ..Default::default()
+        };
+
+        // Build networking config to attach to the default dispenser network
+        let mut endpoints_config: HashMap<String, EndpointSettings> = HashMap::new();
+        endpoints_config.insert(
+            DEFAULT_NETWORK_NAME.to_string(),
+            EndpointSettings::default(),
+        );
+
+        let networking_config = NetworkingConfig {
+            endpoints_config: Some(endpoints_config),
         };
 
         // Build container config
@@ -345,6 +360,7 @@ impl ServiceInstance {
                 Some(exposed_ports)
             },
             host_config: Some(host_config),
+            networking_config: Some(networking_config),
             ..Default::default()
         };
 
@@ -354,8 +370,8 @@ impl ServiceInstance {
 
         docker.create_container(Some(options), config).await?;
 
-        // Connect to additional networks (first one is already connected via network_mode)
-        for network in self.network.iter().skip(1) {
+        // Connect to user-defined networks (default dispenser network is already connected)
+        for network in &self.network {
             let connect_request = NetworkConnectRequest {
                 container: Some(self.service.name.clone()),
                 endpoint_config: Some(EndpointSettings::default()),

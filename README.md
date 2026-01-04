@@ -252,9 +252,13 @@ This is useful for reusing the same configuration in multiple deployments.
 
 ### Step 7: Working with Networks (Optional)
 
-Dispenser supports Docker networks to enable communication between services. Networks are declared in `dispenser.toml` and referenced in individual service configurations.
+Dispenser automatically creates a default network called `dispenser` that **all containers are connected to**. This network uses the subnet `172.28.0.0/16` with gateway `172.28.0.1`, allowing all your services to communicate with each other using their service names as hostnames without any configuration.
 
-1.  Declare networks in your `dispenser.toml`.
+For example, if you have two services `api` and `postgres`, the `api` service can connect to the database using `postgres` as the hostname (e.g., `postgres://postgres:5432/mydb`).
+
+In addition to the default network, you can declare custom networks in `dispenser.toml` for more fine-grained control over container communication.
+
+1.  Declare custom networks in your `dispenser.toml`.
 
     ```toml
     delay = 60
@@ -308,7 +312,7 @@ Dispenser supports Docker networks to enable communication between services. Net
     initialize = "immediately"
     ```
 
-Now both services can communicate with each other using their service names as hostnames.
+Now both services can communicate with each other using their service names as hostnames. Note that even without the explicit `[[network]]` declarations, both services would still be able to communicate via the default `dispenser` network.
 
 For advanced network configuration including external networks, internal networks, labels, and different drivers, see the [Network Configuration Guide](NETWORKS.md).
 

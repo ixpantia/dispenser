@@ -6,7 +6,7 @@ use crate::service::{
     file::{EntrypointFile, ServiceFile},
     instance::{CronWatcher, ServiceInstance},
     manifest::ImageWatcher,
-    network::NetworkInstance,
+    network::{ensure_default_network, remove_default_network, NetworkInstance},
     vars::{render_template, ServiceConfigError, ServiceVarsMaterialized},
 };
 
@@ -153,13 +153,20 @@ impl ServicesManager {
         let mut networks = Vec::new();
         let mut service_names = Vec::new();
 
-        // Process networks first - create NetworkInstance objects
+        // Ensure the default dispenser network exists first
+        // This network is used by all containers for inter-container communication
+        if let Err(e) = ensure_default_network().await {
+            log::error!("Failed to ensure default dispenser network exists: {}", e);
+            return Err(e);
+        }
+
+        // Process user-defined networks - create NetworkInstance objects
         for network_entry in config.entrypoint_file.networks {
             let network = NetworkInstance::from(network_entry);
             networks.push(network);
         }
 
-        // Ensure all networks exist before creating services
+        // Ensure all user-defined networks exist before creating services
         for network in &networks {
             if let Err(e) = network.ensure_exists().await {
                 log::error!("Failed to ensure network {} exists: {}", network.name, e);
@@ -323,5 +330,10 @@ impl ServicesManager {
         self.remove_containers(self.inner.service_names.clone())
             .await;
         self.cleanup_networks().await;
+
+        // Remove the default dispenser network after all containers and user networks are cleaned up
+        if let Err(e) = remove_default_network().await {
+            log::warn!("Failed to remove default dispenser network: {}", e);
+        }
     }
 }
