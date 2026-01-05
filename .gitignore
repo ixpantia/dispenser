@@ -5,3 +5,4 @@ deb/usr/local/bin/dispenser
 rpm/usr/local/bin/dispenser
 *.deb
 *.rpm
+**/**/.DS_Store

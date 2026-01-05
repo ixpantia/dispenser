@@ -1,14 +1,14 @@
 # justfile for dispenser project
 
 DISPENSER_VERSION := shell('grep "^version" Cargo.toml | head -n1 | cut -d \" -f 2')
-TARGET_BIN := "target/x86_64-unknown-linux-musl/release/dispenser"
+TARGET_BIN := "target/x86_64-unknown-linux-gnu/release/dispenser"
 USR_BIN_RPM := "rpm/usr/local/bin/dispenser"
 
 version:
   echo "{{DISPENSER_VERSION}}"
 
 build:
-  CARGO_TARGET_DIR="./target" cargo build --release --target "x86_64-unknown-linux-musl"
+  RUSTFLAGS="-C target-feature=+crt-static" CARGO_TARGET_DIR="./target" cargo build --release --target "x86_64-unknown-linux-gnu"
 
 build-deb: build
   rm -rf target/deb_stage
