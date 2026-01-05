@@ -101,34 +101,13 @@ impl ImageWatcher {
     }
 }
 
-/// Parse an image reference into (image, tag) components
-fn parse_image_reference(image: &str) -> (&str, &str) {
-    // Handle digest references (image@sha256:...)
-    if let Some(at_pos) = image.find('@') {
-        return (&image[..at_pos], &image[at_pos..]);
-    }
-
-    // Handle tag references (image:tag)
-    // Need to be careful with registry URLs that contain port numbers
-    // e.g., localhost:5000/myimage:tag
-    if let Some(colon_pos) = image.rfind(':') {
-        // Check if the colon is part of a port number in the registry URL
-        let after_colon = &image[colon_pos + 1..];
-        // If there's a slash after the colon, it's a port number, not a tag
-        if !after_colon.contains('/') {
-            return (&image[..colon_pos], after_colon);
-        }
-    }
-
-    // No tag specified, use "latest"
-    (image, "latest")
-}
-
 async fn get_latest_digest(image: &str) -> Result<Sha256> {
     let docker = get_docker();
 
     // Parse image name and tag
-    let (image_name, tag) = parse_image_reference(image);
+    let (image_name, tag) = crate::service::docker::parse_image_reference(image);
+    let registry = crate::service::docker::extract_registry(image_name);
+    let credentials = crate::service::docker::get_credentials(registry).await;
 
     // Pull the latest image using bollard
     let options: CreateImageOptions = CreateImageOptionsBuilder::new()
@@ -136,7 +115,7 @@ async fn get_latest_digest(image: &str) -> Result<Sha256> {
         .tag(tag)
         .build();
 
-    let mut stream = docker.create_image(Some(options), None, None);
+    let mut stream = docker.create_image(Some(options), None, credentials);
 
     while let Some(result) = stream.next().await {
         match result {

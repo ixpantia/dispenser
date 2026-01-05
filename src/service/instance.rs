@@ -160,14 +160,17 @@ impl ServiceInstance {
         let docker = get_docker();
 
         // Parse image name and tag
-        let (image, tag) = parse_image_reference(&self.config.service.image);
+        let (image, tag) =
+            crate::service::docker::parse_image_reference(&self.config.service.image);
+        let registry = crate::service::docker::extract_registry(image);
+        let credentials = crate::service::docker::get_credentials(registry).await;
 
         let options: CreateImageOptions = CreateImageOptionsBuilder::new()
             .from_image(image)
             .tag(tag)
             .build();
 
-        let mut stream = docker.create_image(Some(options), None, None);
+        let mut stream = docker.create_image(Some(options), None, credentials);
 
         while let Some(result) = stream.next().await {
             match result {
@@ -557,27 +560,6 @@ impl ServiceInstance {
 }
 
 /// Parse an image reference into (image, tag) components
-fn parse_image_reference(image: &str) -> (&str, &str) {
-    // Handle digest references (image@sha256:...)
-    if let Some(at_pos) = image.find('@') {
-        return (&image[..at_pos], &image[at_pos..]);
-    }
-
-    // Handle tag references (image:tag)
-    // Need to be careful with registry URLs that contain port numbers
-    // e.g., localhost:5000/myimage:tag
-    if let Some(colon_pos) = image.rfind(':') {
-        // Check if the colon is part of a port number in the registry URL
-        let after_colon = &image[colon_pos + 1..];
-        // If there's a slash after the colon, it's a port number, not a tag
-        if !after_colon.contains('/') {
-            return (&image[..colon_pos], after_colon);
-        }
-    }
-
-    // No tag specified, use "latest"
-    (image, "latest")
-}
 
 /// Parse memory limit string (e.g., "512m", "2g") to bytes
 fn parse_memory_limit(limit: &str) -> i64 {
