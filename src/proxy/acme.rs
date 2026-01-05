@@ -10,8 +10,7 @@ use rcgen::{CertificateParams, DistinguishedName, KeyPair, SanType};
 use tokio::sync::Notify;
 use x509_parser::prelude::*;
 
-use crate::cli::get_cli_args;
-use crate::service::manager::ServicesManager;
+use crate::service::{file::CertbotSettings, manager::ServicesManager};
 
 const CERTS_DIR: &str = ".dispenser/certs";
 const CHALLENGES_DIR: &str = ".dispenser/challenges";
@@ -19,12 +18,15 @@ const RENEW_BEFORE_DAYS: i64 = 30;
 
 /// Background task that ensures all managed hosts have valid SSL certificates.
 /// It supports both a simulation mode (self-signed) and ACME (Let's Encrypt).
-pub async fn maintain_certificates(manager: Arc<ServicesManager>, notify: Arc<Notify>) {
-    let simulate = get_cli_args().simulate;
-
+pub async fn maintain_certificates(
+    manager: Arc<ServicesManager>,
+    notify: Arc<Notify>,
+    simulate: bool,
+) {
     // Ensure directories exist
     let _ = tokio::fs::create_dir_all(CERTS_DIR).await;
     let _ = tokio::fs::create_dir_all(CHALLENGES_DIR).await;
+    let settings = manager.get_certbot_settings();
 
     loop {
         info!("Starting certificate maintenance check...");
@@ -44,10 +46,12 @@ pub async fn maintain_certificates(manager: Arc<ServicesManager>, notify: Arc<No
                     changed = true;
                 }
             } else {
-                match ensure_acme_cert(&manager, host).await {
-                    Ok(true) => changed = true,
-                    Ok(false) => {}
-                    Err(e) => error!("ACME error for {}: {}", host, e),
+                if let Some(settings) = &settings {
+                    match ensure_acme_cert(&settings, host).await {
+                        Ok(true) => changed = true,
+                        Ok(false) => {}
+                        Err(e) => error!("ACME error for {}: {}", host, e),
+                    }
                 }
             }
         }
@@ -122,16 +126,12 @@ async fn ensure_simulated_cert(host: &str) -> bool {
 }
 
 async fn ensure_acme_cert(
-    manager: &ServicesManager,
+    settings: &CertbotSettings,
     host: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     if !needs_renewal(host).await {
         return Ok(false);
     }
-
-    let settings = manager
-        .get_certbot_settings()
-        .ok_or("No certbot settings (email) found in dispenser.toml")?;
 
     info!("Starting ACME flow for {}", host);
 

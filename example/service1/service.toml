@@ -12,7 +12,6 @@ cpus = "1.0"     # CPU limit (e.g., "0.5", "1.0", "2.0")
 host = "service1"
 service_port = 80
 
-
 [[volume]]
 source = "./html"
 target = "/usr/share/nginx/html"

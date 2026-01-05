@@ -10,7 +10,7 @@ use tokio::{sync::Mutex, task::JoinSet};
 
 use crate::service::{
     cron_watcher::CronWatcher,
-    file::{CertbotSettings, EntrypointFile, ProxySettings, ServiceFile},
+    file::{CertbotSettings, EntrypointFile, GlobalProxyConfig, ProxySettings, ServiceFile},
     instance::{ServiceInstance, ServiceInstanceConfig},
     manifest::ImageWatcher,
     network::{ensure_default_network, remove_default_network, NetworkInstance},
@@ -23,7 +23,7 @@ pub struct ServiceMangerConfig {
 }
 
 impl ServiceMangerConfig {
-    pub async fn try_init() -> Result<Self, ServiceConfigError> {
+    pub async fn try_init(filter: Option<&[String]>) -> Result<Self, ServiceConfigError> {
         // Load and materialize variables
         let vars = ServiceVarsMaterialized::try_init().await?;
         let entrypoint_file = EntrypointFile::try_init(&vars).await?;
@@ -31,6 +31,16 @@ impl ServiceMangerConfig {
         let mut services = Vec::new();
 
         for entry in &entrypoint_file.services {
+            if let Some(filter) = filter {
+                let path_str = entry.path.to_string_lossy();
+                let matches = filter
+                    .iter()
+                    .any(|f| path_str == *f || path_str.ends_with(&format!("/{}", f)));
+                if !matches {
+                    continue;
+                }
+            }
+
             // Construct the path to service.toml
             let service_toml_path = entry.path.join("service.toml");
 
@@ -61,6 +71,7 @@ struct ServiceManagerInner {
     networks: Vec<NetworkInstance>,
     delay: Duration,
     certbot: Option<CertbotSettings>,
+    proxy: GlobalProxyConfig,
 }
 
 pub struct ServicesManager {
@@ -70,6 +81,9 @@ pub struct ServicesManager {
 }
 
 impl ServicesManager {
+    pub fn proxy_enabled(&self) -> bool {
+        self.inner.proxy.enabled
+    }
     pub fn resolve_host(&self, host: &str) -> Option<SocketAddrV4> {
         if let Some(&service_index) = self.inner.router.get(host) {
             return self.inner.instances[service_index].get_socket_addr();
@@ -182,7 +196,7 @@ impl ServicesManager {
     }
 
     pub async fn from_config(
-        config: ServiceMangerConfig,
+        mut config: ServiceMangerConfig,
         existing_ips: Option<HashMap<String, Ipv4Addr>>,
     ) -> Result<Self, ServiceConfigError> {
         // Get the delay from config (in seconds)
@@ -191,6 +205,7 @@ impl ServicesManager {
         let mut networks = Vec::new();
         let mut service_names = Vec::new();
         let mut router = HashMap::new();
+        let proxy = config.entrypoint_file.proxy;
 
         // Ensure the default dispenser network exists first
         // This network is used by all containers for inter-container communication
@@ -211,6 +226,27 @@ impl ServicesManager {
                 log::error!("Failed to ensure network {} exists: {}", network.name, e);
                 return Err(e);
             }
+        }
+
+        // Prune dependencies: Remove dependencies on services that are not being loaded
+        let loaded_service_names: std::collections::HashSet<String> = config
+            .services
+            .iter()
+            .map(|(_, s)| s.service.name.clone())
+            .collect();
+
+        for (_, service_file) in &mut config.services {
+            service_file.depends_on.retain(|name, _| {
+                let exists = loaded_service_names.contains(name);
+                if !exists {
+                    log::debug!(
+                        "Pruning dependency '{}' from service '{}' as it's not being loaded.",
+                        name,
+                        service_file.service.name
+                    );
+                }
+                exists
+            });
         }
 
         // Allocate IP addresses using "Reserve then Fill" strategy
@@ -292,6 +328,7 @@ impl ServicesManager {
             networks,
             delay,
             router,
+            proxy,
             certbot: config.entrypoint_file.certbot,
         };
 

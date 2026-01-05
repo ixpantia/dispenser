@@ -63,6 +63,7 @@ pub fn handle_reload(reload_signal: Arc<tokio::sync::Notify>) {
 
 pub async fn reload_manager(
     manager_holder: Arc<Mutex<Arc<ServicesManager>>>,
+    service_filter: Option<&[String]>,
 ) -> Result<(), String> {
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Reloading]);
 
@@ -74,8 +75,7 @@ pub async fn reload_manager(
         manager.get_ip_map()
     };
 
-    // Load the new configuration
-    let service_manager_config = match ServiceMangerConfig::try_init().await {
+    let service_manager_config = match ServiceMangerConfig::try_init(service_filter).await {
         Ok(entrypoint_file) => entrypoint_file,
         Err(e) => {
             log::error!("Failed to reload entrypoint file: {e:?}");
@@ -102,6 +102,9 @@ pub async fn reload_manager(
         let mut holder = manager_holder.lock().await;
         let old = holder.clone();
         *holder = Arc::clone(&new_manager);
+        if old.proxy_enabled() != new_manager.proxy_enabled() {
+            log::warn!("proxy.enabled changed between reloads. This is not supported. Please restart dispenser to enable/disable the proxy.");
+        }
         old
     };
 

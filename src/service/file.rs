@@ -13,10 +13,24 @@ pub struct EntrypointFile {
     pub services: Vec<EntrypointFileEntry>,
     #[serde(rename = "network", default)]
     pub networks: Vec<NetworkDeclarationEntry>,
+    #[serde(default)]
+    pub proxy: GlobalProxyConfig,
     /// Delay in seconds between polling for new images (default: 60)
     #[serde(default = "default_delay")]
     pub delay: u64,
     pub certbot: Option<CertbotSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GlobalProxyConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for GlobalProxyConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

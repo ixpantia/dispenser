@@ -1,6 +1,9 @@
 # Delay in seconds between polling for new images (default: 60)
 delay = 60
 
+[proxy]
+enabled = true
+
 [[service]]
 path = "service1"
 

@@ -2,8 +2,12 @@ use std::{process::ExitCode, sync::Arc};
 use tokio::sync::{Mutex, Notify};
 
 use crate::{
+    cli::Commands,
     proxy::{acme, run_dummy_proxy, run_proxy, ProxySignals},
-    service::manager::{ServiceMangerConfig, ServicesManager},
+    service::{
+        manager::{ServiceMangerConfig, ServicesManager},
+        vars::ServiceConfigError,
+    },
 };
 
 mod cli;
@@ -14,15 +18,22 @@ mod signals;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    if let Some(signal) = &cli::get_cli_args().signal {
+    let args = cli::get_cli_args();
+
+    if let Some(signal) = &args.signal {
         return signals::send_signal(signal.clone()).await;
     }
 
     // Initialize the logger
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    if cli::get_cli_args().test {
-        match ServiceMangerConfig::try_init().await {
+    let service_filter = match &args.command {
+        Some(Commands::Dev { services }) => services.as_ref().map(Vec::as_slice),
+        _ => None,
+    };
+
+    if args.test {
+        match ServiceMangerConfig::try_init(service_filter).await {
             Ok(_) => {
                 eprintln!("Dispenser config is ok.");
                 return ExitCode::SUCCESS;
@@ -36,12 +47,7 @@ async fn main() -> ExitCode {
 
     log::info!("Dispenser running with PID: {}", std::process::id());
 
-    if let Err(err) = tokio::fs::write(
-        &cli::get_cli_args().pid_file,
-        std::process::id().to_string(),
-    )
-    .await
-    {
+    if let Err(err) = tokio::fs::write(&args.pid_file, std::process::id().to_string()).await {
         log::error!("Unable to write pid file: {err}");
         return ExitCode::FAILURE;
     }
@@ -55,10 +61,16 @@ async fn main() -> ExitCode {
     signals::handle_sigint(shutdown_signal.clone());
 
     // Initial manager setup
-    let service_manager_config = match ServiceMangerConfig::try_init().await {
+    let service_manager_config = match ServiceMangerConfig::try_init(service_filter).await {
         Ok(conf) => conf,
         Err(e) => {
-            log::error!("Failed to initialize config: {e}");
+            match e {
+                ServiceConfigError::Template((path, e)) => {
+                    log::error!("Error rendering: {path:?}");
+                    log::error!("{e}");
+                }
+                e => log::error!("Failed to initialize config: {e}"),
+            }
             return ExitCode::FAILURE;
         }
     };
@@ -77,14 +89,19 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // This is at a restart level.
+    let proxy_enabled = manager.proxy_enabled();
+
     let manager_holder = Arc::new(Mutex::new(manager));
     let proxy_signals = ProxySignals::new();
 
     // Start dummy proxy to hold the signal lock
-    tokio::task::spawn_blocking({
-        let signals = proxy_signals.clone();
-        move || run_dummy_proxy(signals)
-    });
+    if proxy_enabled {
+        tokio::task::spawn_blocking({
+            let signals = proxy_signals.clone();
+            move || run_dummy_proxy(signals)
+        });
+    }
 
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
 
@@ -99,27 +116,33 @@ async fn main() -> ExitCode {
         });
 
         // 2. ACME Task (Watchdog for certificates)
-        let acme_handle = tokio::spawn(acme::maintain_certificates(
-            current_manager.clone(),
-            proxy_restart_notify.clone(),
-        ));
+        let acme_handle = proxy_enabled.then(|| {
+            tokio::spawn(acme::maintain_certificates(
+                current_manager.clone(),
+                proxy_restart_notify.clone(),
+                service_filter.is_some(), // If the filters exists we are in dev mode.
+            ))
+        });
 
+        // Inner proxy loop;
         loop {
-            // INNER LOOP: Proxy Lifecycle
-            log::info!("Starting proxy instance...");
+            if proxy_enabled {
+                // INNER LOOP: Proxy Lifecycle
+                log::info!("Starting proxy instance...");
 
-            // Start Proxy (Blocking in a thread)
-            std::thread::spawn({
-                let manager = current_manager.clone();
-                let signals = proxy_signals.clone();
-                move || run_proxy(manager, signals)
-            });
+                // Start Proxy (Blocking in a thread)
+                std::thread::spawn({
+                    let manager = current_manager.clone();
+                    let signals = proxy_signals.clone();
+                    move || run_proxy(manager, signals)
+                });
 
-            // Handover: Signal the previous proxy (dummy or old generation) to gracefully upgrade
-            // This releases the Mutex lock in ProxySignals, allowing the new proxy to start listening.
-            proxy_signals
-                .send_signal(pingora::server::ShutdownSignal::GracefulUpgrade)
-                .await;
+                // Handover: Signal the previous proxy (dummy or old generation) to gracefully upgrade
+                // This releases the Mutex lock in ProxySignals, allowing the new proxy to start listening.
+                proxy_signals
+                    .send_signal(pingora::server::ShutdownSignal::GracefulUpgrade)
+                    .await;
+            }
 
             tokio::select! {
                 _ = proxy_restart_notify.notified() => {
@@ -131,9 +154,9 @@ async fn main() -> ExitCode {
 
                     // Abort manager-bound tasks
                     polling_handle.abort();
-                    acme_handle.abort();
+                    acme_handle.map(|t| t.abort());
 
-                    if let Err(e) = signals::reload_manager(manager_holder.clone()).await {
+                    if let Err(e) = signals::reload_manager(manager_holder.clone(), service_filter).await {
                         log::error!("Reload failed: {e}");
                     }
 
@@ -144,7 +167,7 @@ async fn main() -> ExitCode {
 
                     // Abort manager-bound tasks
                     polling_handle.abort();
-                    acme_handle.abort();
+                    acme_handle.map(|t| t.abort());
 
                     let manager = manager_holder.lock().await;
                     manager.cancel().await;

@@ -8,6 +8,7 @@ dispenser operates as a daemon that runs in the background on the host server th
 
 - **[CLI Reference](CLI.md)** - Complete command-line options and usage
 - **[Service Configuration](SERVICE_CONFIG.md)** - Detailed `service.toml` reference
+- **[Reverse Proxy](PROXY.md)** - Built-in proxy and SSL management
 - **[Network Configuration](NETWORKS.md)** - Docker network setup guide
 - **[Cron Scheduling](CRON.md)** - Scheduled deployments
 - **[GCP Secrets](GCP.md)** - Google Secret Manager integration
@@ -312,6 +313,35 @@ In addition to the default network, you can declare custom networks in `dispense
     initialize = "immediately"
     ```
 
+    ### Step 9: Reverse Proxy and SSL
+
+    Dispenser includes a built-in reverse proxy that handles TLS termination and routes traffic to your services using the `Host` header. The proxy is enabled by default and listens on ports 80 and 443. You can explicitly disable it in your main `dispenser.toml` if you are using an external proxy.
+
+    1.  Add a `[proxy]` block to your `service.toml`.
+
+        ```toml
+        [proxy]
+        host = "app.example.com"
+        service_port = 8080
+        ```
+
+    2.  (Optional) Enable Let's Encrypt in `dispenser.toml` to automatically manage certificates. **Note:** This section must be explicitly added; otherwise, Dispenser expects manual certificates.
+
+        ```toml
+        [certbot]
+        email = "admin@example.com"
+        ```
+
+    3.  (Optional) Disable the proxy globally in `dispenser.toml`. **Note:** Changing this setting requires a full process restart to take effect.
+
+        ```toml
+        [proxy]
+        enabled = false
+        ```
+
+    For more details, see the [Reverse Proxy Guide](PROXY.md).
+
+    ### Step 10: Validating Configuration
 Now both services can communicate with each other using their service names as hostnames. Note that even without the explicit `[[network]]` declarations, both services would still be able to communicate via the default `dispenser` network.
 
 For advanced network configuration including external networks, internal networks, labels, and different drivers, see the [Network Configuration Guide](NETWORKS.md).
@@ -394,7 +424,21 @@ No referenced variables
 -------------------------------------------------------------------------------
 ```
 
-### Step 10: Start and Verify the Deployment
+### Step 11: Local Development with `dev` mode
+
+For local development or testing, use the `dev` subcommand to run specific services without loading your entire stack.
+
+```sh
+# Run only the 'api' service with self-signed certificates
+dispenser dev -s api
+```
+
+The `dev` command:
+- **Implicitly enables simulation**: Generates self-signed certificates on the fly for all proxy hosts.
+- **Selective loading**: Only reads and renders configuration for services matching the filter.
+- **Dependency pruning**: Automatically removes dependencies on services that are not part of the current run, so your services start immediately.
+
+### Step 12: Start and Verify the Deployment
 
 1.  Exit the `dispenser` user session to return to your regular user.
     ```sh
@@ -450,6 +494,7 @@ dispenser -s stop
 
 - **[CLI Reference](CLI.md)** - All command-line flags and options
 - **[Service Configuration Reference](SERVICE_CONFIG.md)** - Complete field documentation
+- **[Reverse Proxy](PROXY.md)** - Proxy and SSL configuration
 - **[Network Configuration Guide](NETWORKS.md)** - Advanced networking setup
 - **[Cron Documentation](CRON.md)** - Scheduled deployments
 - **[GCP Secrets Integration](GCP.md)** - Using Google Secret Manager
