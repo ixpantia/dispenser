@@ -1,6 +1,8 @@
 # Dispenser
 
-This tool manages containerized applications by continuously monitoring your artifact registry for new versions of Docker images. When updates are detected, dispenser automatically deploys the new versions of your services with zero downtime, updating the running containers on the host machine.
+Dispenser is a simple, declarative, and deterministic container orchestrator designed for single virtual machines. It combines continuous deployment (CD), a built-in reverse proxy with automatic SSL, and cron scheduling into a single binary, eliminating the need for complex external tooling or manual bash scripts.
+
+This tool manages containerized applications by continuously monitoring your artifact registry for new versions of Docker images. When updates are detected, dispenser automatically redeploys your services, ensuring the running containers on the host machine match the latest versions in your registry.
 
 dispenser operates as a daemon that runs in the background on the host server that watches your artifact registry, detecting when new versions of your container images are published.
 
@@ -12,7 +14,7 @@ dispenser operates as a daemon that runs in the background on the host server th
 - **[Network Configuration](NETWORKS.md)** - Docker network setup guide
 - **[Cron Scheduling](CRON.md)** - Scheduled deployments
 - **[GCP Secrets](GCP.md)** - Google Secret Manager integration
-- **[Migration Guide](MIGRATION_GUIDE.md)** - Migrating from Docker Compose
+
 
 ## Prerequisites
 

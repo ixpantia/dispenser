@@ -1,7 +1,7 @@
 Name: dispenser
 Version: %{version}
 Release: 0
-Summary: Continously Deploy services with Docker Compose
+Summary: Continously Deploy Containerized Services
 License: see /usr/share/doc/dispenser/copyright
 Distribution: Debian
 Group: Converted/unknown

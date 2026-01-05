@@ -653,4 +653,3 @@ This will check for:
 - [Reverse Proxy](PROXY.md) - Proxy and SSL configuration
 - [Network Configuration](NETWORKS.md) - Detailed network setup
 - [CRON Documentation](CRON.md) - Scheduling reference
-- [Migration Guide](MIGRATION_GUIDE.md) - Migrating from Docker Compose

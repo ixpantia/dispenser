@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Dispenser requieres Docker and Docker Compose to be installed in the system
+Dispenser requires Docker to be installed in the system
 as well as [pass](https://www.passwordstore.org/).
 
 ## Install Docker

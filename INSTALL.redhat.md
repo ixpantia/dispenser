@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Dispenser requieres Docker and Docker Compose to be installed in the system
+Dispenser requires Docker to be installed in the system
 as well as [pass](https://www.redhat.com/en/blog/management-password-store).
 
 `pass` is only available on [EPEL](https://www.redhat.com/en/blog/whats-epel-and-how-do-i-use-it) 
