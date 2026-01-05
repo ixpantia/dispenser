@@ -5,6 +5,8 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
+rustls = { version = "0.23", features = ["ring"] }
+
 base64 = "0.22.1"
 bollard = "0.19.4"
 chrono = "0.4.42"
@@ -37,6 +39,7 @@ pingora-load-balancing = "0.6.0"
 pingora-proxy = "0.6.0"
 openssl = "0.10"
 rcgen = "0.14.6"
-instant-acme = "0.8.4"
+instant-acme = { version = "0.8.4", default-features = false, features = ["hyper-rustls", "ring"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots", "json"] }
 x509-parser = "0.18.0"
 http = "1.4.0"

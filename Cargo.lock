@@ -235,7 +235,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a88aab2464f1f25453baa7a07c84c5b7684e274054ba06817f382357f77a288"
 dependencies = [
  "aws-lc-sys",
- "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -776,6 +775,8 @@ dependencies = [
  "pingora-load-balancing",
  "pingora-proxy",
  "rcgen",
+ "reqwest",
+ "rustls",
  "sd-notify",
  "serde",
  "serde_json",
@@ -1594,7 +1595,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9e04488259349908dd13fadaf3a97523b61da296a468c490e112ecc73d28b47"
 dependencies = [
  "async-trait",
- "aws-lc-rs",
  "base64",
  "bytes",
  "http",
@@ -1605,6 +1605,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "rcgen",
+ "ring",
  "rustls",
  "rustls-pki-types",
  "serde",
@@ -2551,7 +2552,6 @@ version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ec0a99f2de91c3cddc84b37e7db80e4d96b743e05607f647eb236fc0455907f"
 dependencies = [
- "aws-lc-rs",
  "pem",
  "ring",
  "rustls-pki-types",
@@ -2666,7 +2666,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.16",
  "libc",
- "untrusted 0.9.0",
+ "untrusted",
  "windows-sys 0.52.0",
 ]
 
@@ -2812,7 +2812,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted 0.9.0",
+ "untrusted",
 ]
 
 [[package]]
@@ -3551,12 +3551,6 @@ checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
 
 [[package]]
 name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
-
-[[package]]
-name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
@@ -4096,7 +4090,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb3e137310115a65136898d2079f003ce33331a6c4b0d51f1531d1be082b6425"
 dependencies = [
  "asn1-rs",
- "aws-lc-rs",
  "data-encoding",
  "der-parser",
  "lazy_static",

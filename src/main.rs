@@ -18,6 +18,10 @@ mod signals;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     let args = cli::get_cli_args();
 
     if let Some(signal) = &args.signal {
