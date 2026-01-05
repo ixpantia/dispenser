@@ -8,10 +8,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub fn send_signal(signal: crate::cli::Signal) -> ExitCode {
+pub async fn send_signal(signal: crate::cli::Signal) -> ExitCode {
     let pid_file = &crate::cli::get_cli_args().pid_file;
 
-    let pid = match std::fs::read_to_string(pid_file) {
+    let pid = match tokio::fs::read_to_string(pid_file).await {
         Ok(pid) => pid,
         Err(err) => {
             eprintln!("Unable to read pid file: {err}");
@@ -48,18 +48,6 @@ pub fn handle_sigint(sigint_signal: Arc<tokio::sync::Notify>) {
             sigint_signal.notify_one();
         }
     });
-}
-pub async fn sigint_manager(
-    manager_holder: Arc<Mutex<Arc<ServicesManager>>>,
-) -> Result<(), String> {
-    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
-
-    log::info!("Shutting down...");
-
-    let manager = manager_holder.lock().await;
-    manager.cancel().await;
-    manager.shutdown().await;
-    Ok(())
 }
 
 pub fn handle_reload(reload_signal: Arc<tokio::sync::Notify>) {

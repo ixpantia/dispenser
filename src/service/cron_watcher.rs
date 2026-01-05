@@ -22,14 +22,7 @@ impl CronWatcher {
         let next = AtomicI64::new(next);
         Self { schedule, next }
     }
-    fn load_next(&self) -> Option<DateTime<Local>> {
-        match self.next.load(Ordering::SeqCst) {
-            NONE_TIMESTAMP => None,
-            next_timestamp => {
-                DateTime::from_timestamp(next_timestamp, 0).map(|dt| dt.with_timezone(&Local))
-            }
-        }
-    }
+
     pub fn is_ready(&self) -> bool {
         let current = self.next.load(Ordering::SeqCst);
         if current == NONE_TIMESTAMP {
@@ -81,44 +74,43 @@ mod tests {
         let schedule = make_schedule("* * * * * *");
         let watcher = CronWatcher::new(&schedule);
 
-        let next = watcher.load_next();
-        assert!(next.is_some(), "Expected next timestamp to be set");
+        let next = watcher.next.load(Ordering::SeqCst);
+        assert!(next != NONE_TIMESTAMP, "Expected next timestamp to be set");
 
-        let next_dt = next.unwrap();
         assert!(
-            next_dt > chrono::Local::now(),
-            "Next timestamp should be in the future"
+            next >= chrono::Local::now().timestamp(),
+            "Next timestamp should be in the future or now"
         );
     }
 
     #[test]
-    fn test_load_next_returns_none_for_none_timestamp() {
+    fn test_next_none_timestamp() {
         let schedule = make_schedule("* * * * * *");
         let watcher = CronWatcher::new(&schedule);
 
         // Manually set the next timestamp to NONE_TIMESTAMP
         watcher.next.store(NONE_TIMESTAMP, Ordering::SeqCst);
 
-        assert!(
-            watcher.load_next().is_none(),
-            "Expected None when timestamp is NONE_TIMESTAMP"
+        assert_eq!(
+            watcher.next.load(Ordering::SeqCst),
+            NONE_TIMESTAMP,
+            "Expected NONE_TIMESTAMP"
         );
     }
 
     #[test]
-    fn test_load_next_returns_datetime_for_valid_timestamp() {
+    fn test_next_is_valid_timestamp() {
         let schedule = make_schedule("* * * * * *");
         let watcher = CronWatcher::new(&schedule);
 
-        let next = watcher.load_next();
-        assert!(next.is_some());
+        let next = watcher.next.load(Ordering::SeqCst);
+        assert!(next != NONE_TIMESTAMP);
 
-        // Verify the returned DateTime is reasonable (within the next minute)
-        let next_dt = next.unwrap();
-        let now = chrono::Local::now();
-        let diff = next_dt.signed_duration_since(now);
+        // Verify the returned timestamp is reasonable (within the next second)
+        let now = chrono::Local::now().timestamp();
+        let diff = next - now;
         assert!(
-            diff.num_seconds() <= 1,
+            diff <= 1,
             "Next occurrence should be within 1 second for per-second schedule"
         );
     }

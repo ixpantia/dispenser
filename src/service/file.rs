@@ -16,6 +16,12 @@ pub struct EntrypointFile {
     /// Delay in seconds between polling for new images (default: 60)
     #[serde(default = "default_delay")]
     pub delay: u64,
+    pub certbot: Option<CertbotSettings>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CertbotSettings {
+    pub email: String,
 }
 
 fn default_delay() -> u64 {
@@ -24,10 +30,8 @@ fn default_delay() -> u64 {
 
 impl EntrypointFile {
     pub async fn try_init(vars: &ServiceVarsMaterialized) -> Result<Self, ServiceConfigError> {
-        use std::io::Read;
-        let mut config = String::new();
         let path = crate::cli::get_cli_args().config.clone();
-        std::fs::File::open(&path)?.read_to_string(&mut config)?;
+        let config = tokio::fs::read_to_string(&path).await?;
 
         // Render the template with variables
         let rendered_config =
@@ -80,6 +84,8 @@ pub struct ProxySettings {
     ///
     /// TODO: Can we have a better name for this config value?
     pub service_port: u16,
+    pub cert_file: Option<PathBuf>,
+    pub key_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

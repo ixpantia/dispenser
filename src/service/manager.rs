@@ -10,7 +10,7 @@ use tokio::{sync::Mutex, task::JoinSet};
 
 use crate::service::{
     cron_watcher::CronWatcher,
-    file::{EntrypointFile, ServiceFile},
+    file::{CertbotSettings, EntrypointFile, ProxySettings, ServiceFile},
     instance::{ServiceInstance, ServiceInstanceConfig},
     manifest::ImageWatcher,
     network::{ensure_default_network, remove_default_network, NetworkInstance},
@@ -60,6 +60,7 @@ struct ServiceManagerInner {
     router: HashMap<String, usize>,
     networks: Vec<NetworkInstance>,
     delay: Duration,
+    certbot: Option<CertbotSettings>,
 }
 
 pub struct ServicesManager {
@@ -82,7 +83,7 @@ impl ServicesManager {
         let mut join_set = JoinSet::new();
 
         for instance in &self.inner.instances {
-            let instance = Arc::clone(&instance);
+            let instance = Arc::clone(instance);
             join_set.spawn(async move {
                 match instance.container_does_not_exist().await {
                     true => Ok(()),
@@ -129,7 +130,7 @@ impl ServicesManager {
                     .find(|(o, _)| *o == &this_instance.config.service.name)
                 {
                     Some((_, other_instance)) => {
-                        this_instance.recreate_if_required(&other_instance).await;
+                        this_instance.recreate_if_required(other_instance).await;
                     }
                     None => {
                         // If the new container does not exist in other
@@ -166,6 +167,18 @@ impl ServicesManager {
             .zip(self.inner.instances.iter())
             .map(|(name, instance)| (name.clone(), instance.config.assigned_ip))
             .collect()
+    }
+
+    pub fn get_proxy_configs(&self) -> Vec<ProxySettings> {
+        self.inner
+            .instances
+            .iter()
+            .filter_map(|instance| instance.config.proxy.clone())
+            .collect()
+    }
+
+    pub fn get_certbot_settings(&self) -> Option<CertbotSettings> {
+        self.inner.certbot.clone()
     }
 
     pub async fn from_config(
@@ -279,6 +292,7 @@ impl ServicesManager {
             networks,
             delay,
             router,
+            certbot: config.entrypoint_file.certbot,
         };
 
         Ok(ServicesManager {

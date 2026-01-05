@@ -1,13 +1,11 @@
 use std::{process::ExitCode, sync::Arc};
+use tokio::sync::{Mutex, Notify};
 
 use crate::{
-    proxy::{run_dummy_proxy, run_proxy, ProxySignals},
-    service::{
-        manager::{ServiceMangerConfig, ServicesManager},
-        vars::ServiceConfigError,
-    },
+    proxy::{acme, run_dummy_proxy, run_proxy, ProxySignals},
+    service::manager::{ServiceMangerConfig, ServicesManager},
 };
-use tokio::sync::Mutex;
+
 mod cli;
 mod proxy;
 mod secrets;
@@ -17,46 +15,56 @@ mod signals;
 #[tokio::main]
 async fn main() -> ExitCode {
     if let Some(signal) = &cli::get_cli_args().signal {
-        return signals::send_signal(signal.clone());
-    }
-    let service_manager_config = match ServiceMangerConfig::try_init().await {
-        Ok(conf) => conf,
-        Err(e) => {
-            match e {
-                ServiceConfigError::Template((path, template_err)) => {
-                    eprintln!("Could not render {path:#?}: {:#}", template_err);
-                }
-                _ => {
-                    eprintln!("Error initializing service manager: {}", e);
-                }
-            }
-            return ExitCode::FAILURE;
-        }
-    };
-
-    // If the user set the test flag it
-    // will just validate the config
-    if cli::get_cli_args().test {
-        eprintln!("Dispenser config is ok.");
-        return ExitCode::SUCCESS;
+        return signals::send_signal(signal.clone()).await;
     }
 
-    // Initialize the loggr
+    // Initialize the logger
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    if cli::get_cli_args().test {
+        match ServiceMangerConfig::try_init().await {
+            Ok(_) => {
+                eprintln!("Dispenser config is ok.");
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("Error validating config: {}", e);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
 
     log::info!("Dispenser running with PID: {}", std::process::id());
 
-    if let Err(err) = std::fs::write(
+    if let Err(err) = tokio::fs::write(
         &cli::get_cli_args().pid_file,
         std::process::id().to_string(),
-    ) {
+    )
+    .await
+    {
         log::error!("Unable to write pid file: {err}");
         return ExitCode::FAILURE;
     }
 
-    // On initial startup, there are no existing IPs to preserve
+    // Signals for lifecycle control
+    let reload_signal = Arc::new(Notify::new());
+    let shutdown_signal = Arc::new(Notify::new());
+    let proxy_restart_notify = Arc::new(Notify::new());
+
+    signals::handle_reload(reload_signal.clone());
+    signals::handle_sigint(shutdown_signal.clone());
+
+    // Initial manager setup
+    let service_manager_config = match ServiceMangerConfig::try_init().await {
+        Ok(conf) => conf,
+        Err(e) => {
+            log::error!("Failed to initialize config: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let manager = match ServicesManager::from_config(service_manager_config, None).await {
-        Ok(manager) => Arc::new(manager),
+        Ok(m) => Arc::new(m),
         Err(e) => {
             log::error!("Failed to create services manager: {e}");
             return ExitCode::FAILURE;
@@ -65,71 +73,90 @@ async fn main() -> ExitCode {
 
     if let Err(e) = manager.validate_containers_not_present().await {
         log::error!("{e}");
-        log::error!("It seems that some of the containers declared already exist. This prevents dispenser from properly managing the life-cycle of these containers. Please remove them and restart dispenser.");
-        std::process::exit(1);
+        log::error!("Containers already exist. Please remove them and restart dispenser.");
+        return ExitCode::FAILURE;
     }
 
-    // Wrap the manager in a Mutex so we can replace it on reload
     let manager_holder = Arc::new(Mutex::new(manager));
+    let proxy_signals = ProxySignals::new();
 
-    // Create a notification channel for reload signals
-    let reload_signal = Arc::new(tokio::sync::Notify::new());
-    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
-
-    // Initialize signal handlers for the new system
-    signals::handle_reload(reload_signal.clone());
-    signals::handle_sigint(shutdown_signal.clone());
+    // Start dummy proxy to hold the signal lock
+    tokio::task::spawn_blocking({
+        let signals = proxy_signals.clone();
+        move || run_dummy_proxy(signals)
+    });
 
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
 
-    let proxy_signals = ProxySignals::new();
-
-    let _ = tokio::task::spawn_blocking({
-        let proxy_signals = proxy_signals.clone();
-        move || run_dummy_proxy(proxy_signals)
-    });
-
-    // Main loop: start polling and wait for reload signals
     loop {
+        // OUTER LOOP: Manager Lifecycle
         let current_manager = manager_holder.lock().await.clone();
 
-        let _proxy_thread = tokio::task::spawn_blocking({
-            let proxy_signals = proxy_signals.clone();
-            let current_manager = current_manager.clone();
-            move || {
-                run_proxy(current_manager, proxy_signals.clone());
-            }
+        // 1. Polling Task (Maintains 'init' and timer state)
+        let polling_handle = tokio::spawn({
+            let manager = current_manager.clone();
+            async move { manager.start_polling().await }
         });
 
-        // According to the pingora documentation first we need to start
-        // the new proxy and then send the signal to upgrade.
-        // https://www.pingorarust.com/user_guide/graceful
-        proxy_signals
-            .send_signal(pingora::server::ShutdownSignal::GracefulUpgrade)
-            .await;
+        // 2. ACME Task (Watchdog for certificates)
+        let acme_handle = tokio::spawn(acme::maintain_certificates(
+            current_manager.clone(),
+            proxy_restart_notify.clone(),
+        ));
 
-        tokio::select! {
-            _ = current_manager.start_polling() => {
-                // Polling ended normally (shouldn't happen unless cancelled)
-                log::info!("Polling ended");
-            }
-            _ = reload_signal.notified() => {
-                // Reload signal received
-                if let Err(e) = signals::reload_manager(manager_holder.clone()).await {
-                    log::error!("Reload failed: {e}");
-                    // Continue with the old manager
-                } else {
-                    log::info!("Starting new manager...");
-                    // Continue the loop with the new manager
+        loop {
+            // INNER LOOP: Proxy Lifecycle
+            log::info!("Starting proxy instance...");
+
+            // Start Proxy (Blocking in a thread)
+            std::thread::spawn({
+                let manager = current_manager.clone();
+                let signals = proxy_signals.clone();
+                move || run_proxy(manager, signals)
+            });
+
+            // Handover: Signal the previous proxy (dummy or old generation) to gracefully upgrade
+            // This releases the Mutex lock in ProxySignals, allowing the new proxy to start listening.
+            proxy_signals
+                .send_signal(pingora::server::ShutdownSignal::GracefulUpgrade)
+                .await;
+
+            tokio::select! {
+                _ = proxy_restart_notify.notified() => {
+                    log::info!("Certificates updated. Restarting proxy...");
+                    continue; // inner loop: start a new proxy instance
                 }
-            }
-            _ = shutdown_signal.notified() => {
-                // Reload signal received
-                if let Err(e) = signals::sigint_manager(manager_holder.clone()).await {
-                    log::error!("Shutdown failed: {e}");
-                    // Continue with the old manager
+                _ = reload_signal.notified() => {
+                    log::info!("Reload signal received. Refreshing manager...");
+
+                    // Abort manager-bound tasks
+                    polling_handle.abort();
+                    acme_handle.abort();
+
+                    if let Err(e) = signals::reload_manager(manager_holder.clone()).await {
+                        log::error!("Reload failed: {e}");
+                    }
+
+                    break; // inner loop -> outer loop to restart manager tasks
                 }
-                std::process::exit(0);
+                _ = shutdown_signal.notified() => {
+                    log::info!("Shutdown signal received. Exiting...");
+
+                    // Abort manager-bound tasks
+                    polling_handle.abort();
+                    acme_handle.abort();
+
+                    let manager = manager_holder.lock().await;
+                    manager.cancel().await;
+                    manager.shutdown().await;
+
+                    proxy_signals.send_signal(pingora::server::ShutdownSignal::GracefulTerminate).await;
+
+                    let _ = tokio::fs::remove_file(&cli::get_cli_args().pid_file).await;
+
+                    // Exit the process
+                    std::process::exit(0);
+                }
             }
         }
     }

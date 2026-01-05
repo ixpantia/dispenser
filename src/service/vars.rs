@@ -66,7 +66,7 @@ pub struct ServiceVarsMaterialized {
 
 impl ServiceVarsMaterialized {
     pub async fn try_init() -> Result<Self, ServiceConfigError> {
-        let vars_raw = ServiceVars::try_init()?;
+        let vars_raw = ServiceVars::try_init().await?;
         vars_raw.materialize().await
     }
 }
@@ -82,7 +82,7 @@ impl Serialize for ServiceVarsMaterialized {
 
 /// Files that match dispenser.vars | *.dispenser.vars
 /// Sorted
-fn list_vars_files() -> Vec<PathBuf> {
+async fn list_vars_files() -> Vec<PathBuf> {
     let mut files = Vec::new();
     let cli_args = crate::cli::get_cli_args();
 
@@ -93,13 +93,15 @@ fn list_vars_files() -> Vec<PathBuf> {
             p
         }
     });
-    if let Ok(entries) = std::fs::read_dir(search_dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
+    if let Ok(mut entries) = tokio::fs::read_dir(search_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            if path.is_file() {
-                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                    if file_name == "dispenser.vars" || file_name.ends_with(".dispenser.vars") {
-                        files.push(path);
+            if let Ok(file_type) = entry.file_type().await {
+                if file_type.is_file() {
+                    if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                        if file_name == "dispenser.vars" || file_name.ends_with(".dispenser.vars") {
+                            files.push(path);
+                        }
                     }
                 }
             }
@@ -125,20 +127,15 @@ impl ServiceVars {
         }
     }
 
-    fn try_init() -> Result<Self, ServiceConfigError> {
-        use std::io::Read;
+    async fn try_init() -> Result<Self, ServiceConfigError> {
         let mut vars = Vec::new();
-        let vars_files = list_vars_files();
+        let vars_files = list_vars_files().await;
         for vars_file in vars_files {
-            match std::fs::File::open(vars_file) {
-                Ok(mut file) => {
-                    let mut this_vars = String::new();
-                    file.read_to_string(&mut this_vars)?;
-                    match Self::try_init_from_string(&this_vars) {
-                        Ok(this_vars) => vars.push(this_vars),
-                        Err(e) => log::error!("Error parsing vars file: {e}"),
-                    }
-                }
+            match tokio::fs::read_to_string(&vars_file).await {
+                Ok(this_vars) => match Self::try_init_from_string(&this_vars) {
+                    Ok(this_vars) => vars.push(this_vars),
+                    Err(e) => log::error!("Error parsing vars file: {e}"),
+                },
                 Err(e) => log::error!("Error reading vars file: {e}"),
             }
         }

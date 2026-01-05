@@ -21,6 +21,10 @@ pub struct Args {
     /// Send a signal to the running dispenser instance
     #[arg(short, long)]
     pub signal: Option<Signal>,
+
+    /// Simulate SSL certificates (generate self-signed on the fly)
+    #[arg(long, default_value_t = false)]
+    pub simulate: bool,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
