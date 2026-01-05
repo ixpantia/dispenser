@@ -2,7 +2,7 @@ pub mod acme;
 pub mod certs;
 
 use async_trait::async_trait;
-use http::{header, Response, StatusCode};
+use http::{header, HeaderValue, Response, StatusCode};
 use log::{debug, info};
 use openssl::ssl::{NameType, SniError};
 use pingora::apps::http_app::ServeHttp;
@@ -85,6 +85,16 @@ impl ProxyHttp for DispenserProxy {
     type CTX = ();
 
     fn new_ctx(&self) {}
+
+    async fn upstream_request_filter(
+        &self,
+        _session: &mut Session,
+        upstream_request: &mut RequestHeader,
+        _ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        upstream_request.insert_header("X-Forwarded-Proto", HeaderValue::from_static("https"))?;
+        Ok(())
+    }
 
     async fn upstream_peer(&self, session: &mut Session, _ctx: &mut ()) -> Result<Box<HttpPeer>> {
         // Get the Host header from the request
