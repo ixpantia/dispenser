@@ -144,7 +144,7 @@ async fn main() -> ExitCode {
                 // Handover: Signal the previous proxy (dummy or old generation) to gracefully upgrade
                 // This releases the Mutex lock in ProxySignals, allowing the new proxy to start listening.
                 proxy_signals
-                    .send_signal(pingora::server::ShutdownSignal::GracefulUpgrade)
+                    .send_signal(pingora::server::ShutdownSignal::GracefulTerminate)
                     .await;
             }
 
