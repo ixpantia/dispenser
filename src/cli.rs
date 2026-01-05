@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::OnceLock};
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Continuous delivery for un-complicated infrastructure.
 #[derive(Parser, Debug)]
@@ -21,6 +21,19 @@ pub struct Args {
     /// Send a signal to the running dispenser instance
     #[arg(short, long)]
     pub signal: Option<Signal>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum Commands {
+    /// Local development mode with selective service loading.
+    Dev {
+        /// Only run the specified services. Matches service path name.
+        #[arg(short, long = "service")]
+        services: Option<Vec<String>>,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]

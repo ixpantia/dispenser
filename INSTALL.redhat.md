@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Dispenser requieres Docker and Docker Compose to be installed in the system
+Dispenser requires Docker to be installed in the system
 as well as [pass](https://www.redhat.com/en/blog/management-password-store).
 
 `pass` is only available on [EPEL](https://www.redhat.com/en/blog/whats-epel-and-how-do-i-use-it) 
@@ -23,7 +23,7 @@ wget ...
 
 
 ```sh
-sudo dnf install ./dispenser-0.8.0-0.x86_64.rpm
+sudo dnf install ./dispenser-0.10.0.0-0.x86_64.rpm
 ```
 
 You can validate that it was successfully installed by switching to the

@@ -6,9 +6,71 @@ This document describes how to configure Docker networks in Dispenser.
 
 Dispenser supports Docker networks to enable communication between services. Networks are declared in `dispenser.toml` and referenced in individual service configurations.
 
+## Default Dispenser Network
+
+Dispenser automatically creates and manages a default network called `dispenser` that **all containers are connected to**. This network provides:
+
+- **Automatic inter-container communication**: All containers can communicate with each other using their service names as hostnames
+- **Predictable IP addresses**: The network uses a dedicated subnet (`172.28.0.0/16`) with gateway `172.28.0.1`
+- **No configuration required**: The network is created automatically when Dispenser starts and removed on shutdown
+
+### Network Details
+
+| Property | Value |
+|----------|-------|
+| Name | `dispenser` |
+| Driver | `bridge` |
+| Subnet | `172.28.0.0/16` |
+| Gateway | `172.28.0.1` |
+| Attachable | `true` |
+
+### Accessing Containers by IP
+
+Since all containers are connected to the dispenser network with a known subnet, you can:
+
+1. **Use service names as hostnames** (recommended): Containers can reach each other using their service name (e.g., `http://my-api:8080`)
+2. **Use assigned IP addresses**: Docker automatically assigns IP addresses from the `172.28.0.0/16` range
+
+### Example
+
+With the default network, two services can communicate without any explicit network configuration:
+
+```toml
+# api/service.toml
+[service]
+name = "api"
+image = "my-api:latest"
+
+[[port]]
+host = 8080
+container = 8080
+
+[dispenser]
+watch = true
+```
+
+```toml
+# worker/service.toml
+[service]
+name = "worker"
+image = "my-worker:latest"
+
+[env]
+API_URL = "http://api:8080"  # Can reach the api service by name
+
+[dispenser]
+watch = true
+```
+
+Both containers are automatically connected to the `dispenser` network and can communicate using their service names.
+
+## User-Defined Networks
+
+In addition to the default dispenser network, you can define custom networks for more fine-grained control over container communication.
+
 ## Network Declaration
 
-Networks must be declared in your `dispenser.toml` file before they can be referenced by services.
+Custom networks must be declared in your `dispenser.toml` file before they can be referenced by services. These networks are **in addition to** the default `dispenser` network.
 
 ### Basic Network Declaration
 
@@ -370,6 +432,26 @@ When `external = true`, Dispenser will not attempt to create or delete the netwo
 
 ## Troubleshooting
 
+### Default Dispenser Network Issues
+
+The `dispenser` network is automatically created when Dispenser starts. If you encounter issues:
+
+1. **Network already exists from previous run**: If Dispenser didn't shut down cleanly, the network may still exist. Remove it manually:
+   ```sh
+   docker network rm dispenser
+   ```
+
+2. **Subnet conflict**: The default subnet `172.28.0.0/16` may conflict with existing networks. Check for conflicts:
+   ```sh
+   docker network ls
+   docker network inspect dispenser
+   ```
+
+3. **Viewing container IPs on the dispenser network**:
+   ```sh
+   docker network inspect dispenser --format '{{range .Containers}}{{.Name}}: {{.IPv4Address}}{{"\n"}}{{end}}'
+   ```
+
 ### Network Already Exists
 
 If you see an error that a network already exists, either:
@@ -379,7 +461,7 @@ If you see an error that a network already exists, either:
 ### Services Cannot Communicate
 
 Ensure that:
-1. Both services are connected to the same network
+1. Both services are connected to the same network (all services are on the `dispenser` network by default)
 2. You're using the correct service name as the hostname
 3. The network is not marked as `internal` if internet access is needed
 4. Firewall rules are not blocking traffic

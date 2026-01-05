@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Dispenser requieres Docker and Docker Compose to be installed in the system
+Dispenser requires Docker to be installed in the system
 as well as [pass](https://www.passwordstore.org/).
 
 ## Install Docker
@@ -21,7 +21,7 @@ wget ...
 
 
 ```sh
-sudo apt install ./dispenser-0.8.0-0.x86_64.deb
+sudo apt install ./dispenser-0.10.0.0-0.x86_64.deb
 ```
 
 You can validate that it was successfully installed by switching to the

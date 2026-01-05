@@ -3,6 +3,12 @@
 //! This module provides functionality to manage Docker networks from the entrypoint configuration.
 //! Networks are created before services start and can be cleaned up on shutdown.
 //!
+//! # Default Network
+//!
+//! Dispenser automatically creates a default network (`dispenser`) that all containers
+//! are connected to. This network uses a bridge driver with a specific subnet
+//! (172.28.0.0/16) to provide predictable IP addresses for containers.
+//!
 //! # Example
 //!
 //! Networks are defined in the entrypoint file (e.g., `dispenser.toml`):
@@ -26,7 +32,24 @@
 
 use std::collections::HashMap;
 
-use crate::service::file::{NetworkDeclarationEntry, NetworkDriver};
+use bollard::models::{Ipam, IpamConfig, NetworkCreateRequest};
+use bollard::query_parameters::{InspectNetworkOptions, InspectNetworkOptionsBuilder};
+
+use crate::service::vars::ServiceConfigError;
+use crate::service::{
+    docker::get_docker,
+    file::{NetworkDeclarationEntry, NetworkDriver},
+};
+
+/// The name of the default dispenser network that all containers are connected to.
+pub const DEFAULT_NETWORK_NAME: &str = "dispenser";
+
+/// The subnet for the default dispenser network.
+/// This provides a /16 network with 65,534 usable host addresses.
+pub const DEFAULT_NETWORK_SUBNET: &str = "172.28.0.0/16";
+
+/// The gateway IP for the default dispenser network.
+pub const DEFAULT_NETWORK_GATEWAY: &str = "172.28.0.1";
 
 pub struct NetworkInstance {
     pub name: String,
@@ -35,6 +58,10 @@ pub struct NetworkInstance {
     pub internal: bool,
     pub attachable: bool,
     pub labels: HashMap<String, String>,
+    /// Optional subnet configuration for the network (CIDR notation)
+    pub subnet: Option<String>,
+    /// Optional gateway IP for the network
+    pub gateway: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,27 +79,48 @@ impl From<NetworkDeclarationEntry> for NetworkInstance {
             internal: entry.internal,
             attachable: entry.attachable,
             labels: entry.labels,
+            subnet: None,
+            gateway: None,
         }
     }
 }
 
 impl NetworkInstance {
-    /// Check if a network exists
-    pub async fn check_network(&self) -> Result<NetworkStatus, std::io::Error> {
-        let output = tokio::process::Command::new("docker")
-            .args(["network", "inspect", &self.name])
-            .output()
-            .await?;
+    /// Create the default dispenser network instance.
+    /// This network is automatically created and all containers are connected to it.
+    pub fn default_network() -> Self {
+        let mut labels = HashMap::new();
+        labels.insert("managed-by".to_string(), "dispenser".to_string());
 
-        if output.status.success() {
-            Ok(NetworkStatus::Exists)
-        } else {
-            Ok(NetworkStatus::NotFound)
+        Self {
+            name: DEFAULT_NETWORK_NAME.to_string(),
+            driver: NetworkDriver::Bridge,
+            external: false,
+            internal: false,
+            attachable: true,
+            labels,
+            subnet: Some(DEFAULT_NETWORK_SUBNET.to_string()),
+            gateway: Some(DEFAULT_NETWORK_GATEWAY.to_string()),
         }
     }
 
-    /// Create the network if it doesn't exist
-    pub async fn create_network(&self) -> Result<(), std::io::Error> {
+    /// Check if a network exists using bollard
+    pub async fn check_network(&self) -> Result<NetworkStatus, ServiceConfigError> {
+        let docker = get_docker();
+
+        let options: InspectNetworkOptions = InspectNetworkOptionsBuilder::new().build();
+
+        match docker.inspect_network(&self.name, Some(options)).await {
+            Ok(_) => Ok(NetworkStatus::Exists),
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => Ok(NetworkStatus::NotFound),
+            Err(e) => Err(ServiceConfigError::DockerApi(e)),
+        }
+    }
+
+    /// Create the network if it doesn't exist using bollard
+    pub async fn create_network(&self) -> Result<(), ServiceConfigError> {
         // If external, we don't create it - it should already exist
         if self.external {
             log::info!(
@@ -91,53 +139,64 @@ impl NetworkInstance {
 
         log::info!("Creating network: {}", self.name);
 
-        let mut cmd = tokio::process::Command::new("docker");
-        cmd.args(["network", "create"]);
+        let docker = get_docker();
 
-        // Add driver
-        let driver_str = match self.driver {
+        let driver = match self.driver {
             NetworkDriver::Bridge => "bridge",
             NetworkDriver::Host => "host",
             NetworkDriver::Overlay => "overlay",
             NetworkDriver::Macvlan => "macvlan",
             NetworkDriver::None => "none",
         };
-        cmd.args(["--driver", driver_str]);
 
-        // Add internal flag
-        if self.internal {
-            cmd.arg("--internal");
-        }
+        // Build IPAM configuration if subnet is specified
+        let ipam = if self.subnet.is_some() || self.gateway.is_some() {
+            let ipam_config = IpamConfig {
+                subnet: self.subnet.clone(),
+                gateway: self.gateway.clone(),
+                ip_range: None,
+                auxiliary_addresses: None,
+            };
 
-        // Add attachable flag (useful for overlay networks)
-        if self.attachable {
-            cmd.arg("--attachable");
-        }
-
-        // Add labels
-        for (key, value) in &self.labels {
-            cmd.args(["--label", &format!("{}={}", key, value)]);
-        }
-
-        // Add the network name
-        cmd.arg(&self.name);
-
-        let output = cmd.output().await?;
-
-        if output.status.success() {
-            log::info!("Network {} created successfully", self.name);
-            Ok(())
+            Some(Ipam {
+                driver: Some("default".to_string()),
+                config: Some(vec![ipam_config]),
+                options: None,
+            })
         } else {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            log::error!("Failed to create network {}: {}", self.name, error_msg);
-            Err(std::io::Error::other(
-                format!("Failed to create network: {}", error_msg),
-            ))
+            None
+        };
+
+        let request = NetworkCreateRequest {
+            name: self.name.clone(),
+            driver: Some(driver.to_string()),
+            internal: Some(self.internal),
+            attachable: Some(self.attachable),
+            labels: Some(self.labels.clone()),
+            ipam,
+            ..Default::default()
+        };
+
+        match docker.create_network(request).await {
+            Ok(_) => {
+                log::info!("Network {} created successfully", self.name);
+                if let Some(ref subnet) = self.subnet {
+                    log::info!("  Subnet: {}", subnet);
+                }
+                if let Some(ref gateway) = self.gateway {
+                    log::info!("  Gateway: {}", gateway);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                log::error!("Failed to create network {}: {}", self.name, e);
+                Err(ServiceConfigError::DockerApi(e))
+            }
         }
     }
 
-    /// Remove the network
-    pub async fn remove_network(&self) -> Result<(), std::io::Error> {
+    /// Remove the network using bollard
+    pub async fn remove_network(&self) -> Result<(), ServiceConfigError> {
         // Don't remove external networks
         if self.external {
             log::info!(
@@ -149,25 +208,30 @@ impl NetworkInstance {
 
         log::info!("Removing network: {}", self.name);
 
-        let output = tokio::process::Command::new("docker")
-            .args(["network", "rm", &self.name])
-            .output()
-            .await?;
+        let docker = get_docker();
 
-        if output.status.success() {
-            log::info!("Network {} removed successfully", self.name);
-            Ok(())
-        } else {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            log::warn!("Failed to remove network {}: {}", self.name, error_msg);
-            // Don't return error for removal failures as they might be expected
-            // (e.g., network still in use by containers)
-            Ok(())
+        match docker.remove_network(&self.name).await {
+            Ok(_) => {
+                log::info!("Network {} removed successfully", self.name);
+                Ok(())
+            }
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {
+                log::info!("Network {} not found, skipping removal", self.name);
+                Ok(())
+            }
+            Err(e) => {
+                log::warn!("Failed to remove network {}: {}", self.name, e);
+                // Don't return error for removal failures as they might be expected
+                // (e.g., network still in use by containers)
+                Ok(())
+            }
         }
     }
 
     /// Ensure the network exists (create if needed)
-    pub async fn ensure_exists(&self) -> Result<(), std::io::Error> {
+    pub async fn ensure_exists(&self) -> Result<(), ServiceConfigError> {
         let status = self.check_network().await?;
 
         match status {
@@ -181,14 +245,25 @@ impl NetworkInstance {
                         "External network {} does not exist. Please create it manually.",
                         self.name
                     );
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("External network {} not found", self.name),
-                    ))
+                    Err(ServiceConfigError::NetworkNotFound(self.name.clone()))
                 } else {
                     self.create_network().await
                 }
             }
         }
     }
+}
+
+/// Ensure the default dispenser network exists.
+/// This should be called during manager initialization before any containers are created.
+pub async fn ensure_default_network() -> Result<(), ServiceConfigError> {
+    let default_network = NetworkInstance::default_network();
+    default_network.ensure_exists().await
+}
+
+/// Remove the default dispenser network.
+/// This should be called during shutdown after all containers have been removed.
+pub async fn remove_default_network() -> Result<(), ServiceConfigError> {
+    let default_network = NetworkInstance::default_network();
+    default_network.remove_network().await
 }

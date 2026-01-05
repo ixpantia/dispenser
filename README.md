@@ -1,6 +1,8 @@
 # Dispenser
 
-This tool manages containerized applications by continuously monitoring your artifact registry for new versions of Docker images. When updates are detected, dispenser automatically deploys the new versions of your services with zero downtime, updating the running containers on the host machine.
+Dispenser is a simple, declarative, and deterministic container orchestrator designed for single virtual machines. It combines continuous deployment (CD), a built-in reverse proxy with automatic SSL, and cron scheduling into a single binary, eliminating the need for complex external tooling or manual bash scripts.
+
+This tool manages containerized applications by continuously monitoring your artifact registry for new versions of Docker images. When updates are detected, dispenser automatically redeploys your services, ensuring the running containers on the host machine match the latest versions in your registry.
 
 dispenser operates as a daemon that runs in the background on the host server that watches your artifact registry, detecting when new versions of your container images are published.
 
@@ -8,10 +10,11 @@ dispenser operates as a daemon that runs in the background on the host server th
 
 - **[CLI Reference](CLI.md)** - Complete command-line options and usage
 - **[Service Configuration](SERVICE_CONFIG.md)** - Detailed `service.toml` reference
+- **[Reverse Proxy](PROXY.md)** - Built-in proxy and SSL management
 - **[Network Configuration](NETWORKS.md)** - Docker network setup guide
 - **[Cron Scheduling](CRON.md)** - Scheduled deployments
 - **[GCP Secrets](GCP.md)** - Google Secret Manager integration
-- **[Migration Guide](MIGRATION_GUIDE.md)** - Migrating from Docker Compose
+
 
 ## Prerequisites
 
@@ -30,9 +33,9 @@ Download the latest `.deb` or `.rpm` package from the [releases page](https://gi
 
 ```sh
 # Download the .deb package
-# wget https://github.com/ixpantia/dispenser/releases/download/v0.8.0/dispenser-0.8.0-0.x86_64.deb
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.10.0/dispenser-0.10.0.0-0.x86_64.deb
 
-sudo apt install ./dispenser-0.8.0-0.x86_64.deb
+sudo apt install ./dispenser-0.10.0.0-0.x86_64.deb
 ```
 
 ### RHEL / CentOS / Fedora
@@ -41,7 +44,7 @@ sudo apt install ./dispenser-0.8.0-0.x86_64.deb
 # Download the .rpm package
 # wget ...
 
-sudo dnf install ./dispenser-0.8.0-0.x86_64.rpm
+sudo dnf install ./dispenser-0.10.0.0-0.x86_64.rpm
 ```
 
 The installation process will:
@@ -252,9 +255,13 @@ This is useful for reusing the same configuration in multiple deployments.
 
 ### Step 7: Working with Networks (Optional)
 
-Dispenser supports Docker networks to enable communication between services. Networks are declared in `dispenser.toml` and referenced in individual service configurations.
+Dispenser automatically creates a default network called `dispenser` that **all containers are connected to**. This network uses the subnet `172.28.0.0/16` with gateway `172.28.0.1`, allowing all your services to communicate with each other using their service names as hostnames without any configuration.
 
-1.  Declare networks in your `dispenser.toml`.
+For example, if you have two services `api` and `postgres`, the `api` service can connect to the database using `postgres` as the hostname (e.g., `postgres://postgres:5432/mydb`).
+
+In addition to the default network, you can declare custom networks in `dispenser.toml` for more fine-grained control over container communication.
+
+1.  Declare custom networks in your `dispenser.toml`.
 
     ```toml
     delay = 60
@@ -308,7 +315,36 @@ Dispenser supports Docker networks to enable communication between services. Net
     initialize = "immediately"
     ```
 
-Now both services can communicate with each other using their service names as hostnames.
+    ### Step 9: Reverse Proxy and SSL
+
+    Dispenser includes a built-in reverse proxy that handles TLS termination and routes traffic to your services using the `Host` header. The proxy is enabled by default and listens on ports 80 and 443. You can explicitly disable it in your main `dispenser.toml` if you are using an external proxy.
+
+    1.  Add a `[proxy]` block to your `service.toml`.
+
+        ```toml
+        [proxy]
+        host = "app.example.com"
+        service_port = 8080
+        ```
+
+    2.  (Optional) Enable Let's Encrypt in `dispenser.toml` to automatically manage certificates. **Note:** This section must be explicitly added; otherwise, Dispenser expects manual certificates.
+
+        ```toml
+        [certbot]
+        email = "admin@example.com"
+        ```
+
+    3.  (Optional) Disable the proxy globally in `dispenser.toml`. **Note:** Changing this setting requires a full process restart to take effect.
+
+        ```toml
+        [proxy]
+        enabled = false
+        ```
+
+    For more details, see the [Reverse Proxy Guide](PROXY.md).
+
+    ### Step 10: Validating Configuration
+Now both services can communicate with each other using their service names as hostnames. Note that even without the explicit `[[network]]` declarations, both services would still be able to communicate via the default `dispenser` network.
 
 For advanced network configuration including external networks, internal networks, labels, and different drivers, see the [Network Configuration Guide](NETWORKS.md).
 
@@ -390,7 +426,21 @@ No referenced variables
 -------------------------------------------------------------------------------
 ```
 
-### Step 10: Start and Verify the Deployment
+### Step 11: Local Development with `dev` mode
+
+For local development or testing, use the `dev` subcommand to run specific services without loading your entire stack.
+
+```sh
+# Run only the 'api' service with self-signed certificates
+dispenser dev -s api
+```
+
+The `dev` command:
+- **Implicitly enables simulation**: Generates self-signed certificates on the fly for all proxy hosts.
+- **Selective loading**: Only reads and renders configuration for services matching the filter.
+- **Dependency pruning**: Automatically removes dependencies on services that are not part of the current run, so your services start immediately.
+
+### Step 12: Start and Verify the Deployment
 
 1.  Exit the `dispenser` user session to return to your regular user.
     ```sh
@@ -446,6 +496,7 @@ dispenser -s stop
 
 - **[CLI Reference](CLI.md)** - All command-line flags and options
 - **[Service Configuration Reference](SERVICE_CONFIG.md)** - Complete field documentation
+- **[Reverse Proxy](PROXY.md)** - Proxy and SSL configuration
 - **[Network Configuration Guide](NETWORKS.md)** - Advanced networking setup
 - **[Cron Documentation](CRON.md)** - Scheduled deployments
 - **[GCP Secrets Integration](GCP.md)** - Using Google Secret Manager

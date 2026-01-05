@@ -1,12 +1,14 @@
 # Delay in seconds between polling for new images (default: 60)
 delay = 60
 
-[[network]]
-name = "dispenser-net"
-driver = "bridge"
+[proxy]
+enabled = true
 
 [[service]]
-path = "nginx"
+path = "service1"
+
+[[service]]
+path = "service2"
 
 [[service]]
 path = "hello-world"

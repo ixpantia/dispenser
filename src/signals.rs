@@ -8,10 +8,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub fn send_signal(signal: crate::cli::Signal) -> ExitCode {
+pub async fn send_signal(signal: crate::cli::Signal) -> ExitCode {
     let pid_file = &crate::cli::get_cli_args().pid_file;
 
-    let pid = match std::fs::read_to_string(pid_file) {
+    let pid = match tokio::fs::read_to_string(pid_file).await {
         Ok(pid) => pid,
         Err(err) => {
             eprintln!("Unable to read pid file: {err}");
@@ -49,18 +49,6 @@ pub fn handle_sigint(sigint_signal: Arc<tokio::sync::Notify>) {
         }
     });
 }
-pub async fn sigint_manager(
-    manager_holder: Arc<Mutex<Arc<ServicesManager>>>,
-) -> Result<(), String> {
-    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
-
-    log::info!("Shutting down...");
-
-    let manager = manager_holder.lock().await;
-    manager.cancel().await;
-    manager.shutdown().await;
-    Ok(())
-}
 
 pub fn handle_reload(reload_signal: Arc<tokio::sync::Notify>) {
     let mut signals = Signals::new([SIGHUP]).expect("No signals :(");
@@ -75,13 +63,19 @@ pub fn handle_reload(reload_signal: Arc<tokio::sync::Notify>) {
 
 pub async fn reload_manager(
     manager_holder: Arc<Mutex<Arc<ServicesManager>>>,
+    service_filter: Option<&[String]>,
 ) -> Result<(), String> {
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Reloading]);
 
     log::info!("Reloading configuration...");
 
-    // Load the new configuration
-    let service_manager_config = match ServiceMangerConfig::try_init().await {
+    // Snapshot the existing IP assignments before loading new config
+    let existing_ips = {
+        let manager = manager_holder.lock().await;
+        manager.get_ip_map()
+    };
+
+    let service_manager_config = match ServiceMangerConfig::try_init(service_filter).await {
         Ok(entrypoint_file) => entrypoint_file,
         Err(e) => {
             log::error!("Failed to reload entrypoint file: {e:?}");
@@ -90,15 +84,16 @@ pub async fn reload_manager(
         }
     };
 
-    // Create a new manager with the new configuration
-    let new_manager = match ServicesManager::from_config(service_manager_config).await {
-        Ok(manager) => Arc::new(manager),
-        Err(e) => {
-            log::error!("Failed to create new services manager: {e}");
-            let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
-            return Err(format!("Failed to create new services manager: {e}"));
-        }
-    };
+    // Create a new manager with the new configuration, passing existing IPs
+    let new_manager =
+        match ServicesManager::from_config(service_manager_config, Some(existing_ips)).await {
+            Ok(manager) => Arc::new(manager),
+            Err(e) => {
+                log::error!("Failed to create new services manager: {e}");
+                let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
+                return Err(format!("Failed to create new services manager: {e}"));
+            }
+        };
 
     log::info!("New configuration loaded successfully");
 
@@ -107,6 +102,9 @@ pub async fn reload_manager(
         let mut holder = manager_holder.lock().await;
         let old = holder.clone();
         *holder = Arc::clone(&new_manager);
+        if old.proxy_enabled() != new_manager.proxy_enabled() {
+            log::warn!("proxy.enabled changed between reloads. This is not supported. Please restart dispenser to enable/disable the proxy.");
+        }
         old
     };
 

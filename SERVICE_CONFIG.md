@@ -33,6 +33,9 @@ restart = "policy"
 
 [depends_on]
 # Service dependencies
+
+[proxy]
+# Reverse proxy configuration
 ```
 
 ## Service Section
@@ -381,6 +384,47 @@ migration = "service-completed"
 - `service-started` or `started` - Wait for service to start
 - `service-completed` or `completed` - Wait for service to complete
 
+## Proxy Configuration
+
+The `[proxy]` section configures the built-in reverse proxy to route traffic to this service. These settings only take effect if the proxy is enabled globally in your main `dispenser.toml` file (enabled by default). Note that enabling/disabling the proxy globally requires a full process restart.
+
+### `host` (required)
+
+The domain name (FQDN) that this service should respond to.
+
+```toml
+[proxy]
+host = "app.example.com"
+```
+
+### `service_port` (required)
+
+The port the application is listening on inside the container. This is where the proxy will forward traffic.
+
+```toml
+[proxy]
+host = "app.example.com"
+service_port = 8080
+```
+
+### `cert_file` (optional)
+
+Path to a custom SSL certificate file (PEM format). If not provided, Dispenser uses Let's Encrypt only if the `[certbot]` section is explicitly defined in your main `dispenser.toml`. If `[certbot]` is missing, Dispenser expects manual certificates here (or will use simulation mode if running the `dev` command).
+
+### `key_file` (optional)
+
+Path to the private key file for the custom certificate.
+
+```toml
+[proxy]
+host = "internal.example.com"
+service_port = 80
+cert_file = "/etc/ssl/certs/internal.crt"
+key_file = "/etc/ssl/certs/internal.key"
+```
+
+See [PROXY.md](PROXY.md) for more details on the reverse proxy.
+
 ## Complete Examples
 
 ### Basic Web Application
@@ -606,6 +650,6 @@ This will check for:
 ## See Also
 
 - [CLI Reference](CLI.md) - Command-line options
+- [Reverse Proxy](PROXY.md) - Proxy and SSL configuration
 - [Network Configuration](NETWORKS.md) - Detailed network setup
 - [CRON Documentation](CRON.md) - Scheduling reference
-- [Migration Guide](MIGRATION_GUIDE.md) - Migrating from Docker Compose

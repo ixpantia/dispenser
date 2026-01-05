@@ -5,7 +5,7 @@ This document describes all available command-line options for Dispenser.
 ## Usage
 
 ```sh
-dispenser [OPTIONS]
+dispenser [OPTIONS] [COMMAND]
 ```
 
 ## Options
@@ -47,6 +47,8 @@ Dispenser config is ok.
 No referenced variables
 -------------------------------------------------------------------------------
 ```
+
+
 
 ### `-p, --pid-file <PATH>`
 
@@ -92,6 +94,29 @@ Display the current version of Dispenser.
 **Example:**
 ```sh
 dispenser --version
+```
+
+## Subcommands
+
+### `dev`
+
+Starts Dispenser in local development mode.
+
+**Key features:**
+- **Implicit Simulation**: Automatically enables SSL simulation (self-signed certificates) for all proxy hosts.
+- **Selective Loading**: Only loads and renders services specified with the `--service` flag.
+- **Dependency Pruning**: Automatically removes dependencies on services that are not being loaded, allowing selected services to start immediately without waiting for missing dependencies.
+
+**Options:**
+- `-s, --service <NAME>`: The name or path of the service(s) to run. Can be specified multiple times (e.g., `-s api -s db` or `-s api db`).
+
+**Example:**
+```sh
+# Only run the 'api' service
+dispenser dev --service api
+
+# Run specific services and bypass others
+dispenser dev -s web -s db
 ```
 
 ## Common Usage Patterns
