@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bollard::query_parameters::{CreateImageOptions, CreateImageOptionsBuilder};
 use futures_util::StreamExt;
 use thiserror::Error;
@@ -33,11 +35,28 @@ impl std::fmt::Debug for Sha256 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use tokio::sync::Mutex;
+
+/// ImageWatcher monitors a Docker image for updates by tracking its digest.
+///
+/// # Equality
+///
+/// Note: PartialEq and Eq are implemented to compare only the `image` field,
+/// ignoring `last_digest`. This allows ImageWatcher instances to be considered
+/// equal if they watch the same image, regardless of their current digest state.
+#[derive(Debug)]
 pub struct ImageWatcher {
     image: Box<str>,
-    last_digest: Option<Sha256>,
+    last_digest: Mutex<Option<Sha256>>,
 }
+
+impl PartialEq for ImageWatcher {
+    fn eq(&self, other: &Self) -> bool {
+        self.image == other.image
+    }
+}
+
+impl Eq for ImageWatcher {}
 
 #[derive(Debug, Copy, Clone)]
 pub enum ImageWatcherStatus {
@@ -58,10 +77,13 @@ impl ImageWatcher {
         };
 
         let image = image.into();
-        ImageWatcher { image, last_digest }
+        ImageWatcher {
+            image,
+            last_digest: Mutex::new(last_digest),
+        }
     }
-    pub async fn update(&mut self) -> ImageWatcherStatus {
-        let last_digest = self.last_digest;
+    pub async fn update(&self) -> ImageWatcherStatus {
+        let last_digest = *self.last_digest.lock().await;
         let new_sha256 = get_latest_digest(&self.image).await;
         match new_sha256 {
             Err(e) => {
@@ -70,7 +92,7 @@ impl ImageWatcher {
             }
             Ok(new_sha256) if last_digest == Some(new_sha256) => ImageWatcherStatus::NotUpdated,
             Ok(new_sha256) => {
-                self.last_digest = Some(new_sha256);
+                *self.last_digest.lock().await = Some(new_sha256);
                 log::info!(
                     "Found a new version for {}, update will start soon...",
                     self.image,

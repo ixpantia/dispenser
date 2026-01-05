@@ -9,9 +9,9 @@ use super::vars::{render_template, ServiceConfigError, ServiceVarsMaterialized};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntrypointFile {
-    #[serde(rename = "service")]
+    #[serde(rename = "service", default)]
     pub services: Vec<EntrypointFileEntry>,
-    #[serde(rename = "network")]
+    #[serde(rename = "network", default)]
     pub networks: Vec<NetworkDeclarationEntry>,
     /// Delay in seconds between polling for new images (default: 60)
     #[serde(default = "default_delay")]
@@ -64,6 +64,24 @@ fn default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProxySettings {
+    /// Example: example.com, something.dispenser.org
+    ///
+    /// Equivalent to nginx server_name but without wildcards.
+    ///
+    /// TODO: Could we choose a better name?
+    ///
+    /// TODO: Document this
+    pub host: String,
+    /// The port of the service running inside the container.
+    /// The dispenser reverse proxy will send HTTP/WebSocket traffic
+    /// to this port.
+    ///
+    /// TODO: Can we have a better name for this config value?
+    pub service_port: u16,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum NetworkDriver {
     #[default]
@@ -103,6 +121,8 @@ pub struct ServiceFile {
     pub dispenser: DispenserConfig,
     #[serde(default)]
     pub depends_on: HashMap<String, DependsOnCondition>,
+    #[serde(default)]
+    pub proxy: Option<ProxySettings>,
 }
 
 /// Defines when a service should be initialized.

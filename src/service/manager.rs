@@ -1,13 +1,17 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddrV4, path::PathBuf, sync::Arc, time::Duration};
 
 use tokio::{sync::Mutex, task::JoinSet};
 
-use crate::service::{
-    file::{EntrypointFile, ServiceFile},
-    instance::{CronWatcher, ServiceInstance},
-    manifest::ImageWatcher,
-    network::{ensure_default_network, remove_default_network, NetworkInstance},
-    vars::{render_template, ServiceConfigError, ServiceVarsMaterialized},
+use crate::{
+    proxy::atomic_socket::AtomicOptionSocketAddrV4,
+    service::{
+        cron_watcher::CronWatcher,
+        file::{EntrypointFile, ServiceFile},
+        instance::{ServiceInstance, ServiceInstanceConfig},
+        manifest::ImageWatcher,
+        network::{ensure_default_network, remove_default_network, NetworkInstance},
+        vars::{render_template, ServiceConfigError, ServiceVarsMaterialized},
+    },
 };
 
 pub struct ServiceMangerConfig {
@@ -49,7 +53,8 @@ impl ServiceMangerConfig {
 struct ServiceManagerInner {
     // These two are craeted together. We can zip them
     pub service_names: Vec<String>,
-    instances: Vec<Arc<Mutex<ServiceInstance>>>,
+    instances: Vec<Arc<ServiceInstance>>,
+    router: HashMap<String, usize>,
     networks: Vec<NetworkInstance>,
     delay: Duration,
 }
@@ -61,6 +66,12 @@ pub struct ServicesManager {
 }
 
 impl ServicesManager {
+    pub fn resolve_host(&self, host: &str) -> Option<SocketAddrV4> {
+        if let Some(&service_index) = self.inner.router.get(host) {
+            return self.inner.instances[service_index].get_socket_addr();
+        }
+        None
+    }
     // We should ensure that the containers don't exist before start up.
     // This is to make 100% sure that dispenser controls these containers
     // and they don't exist previously.
@@ -68,14 +79,13 @@ impl ServicesManager {
         let mut join_set = JoinSet::new();
 
         for instance in &self.inner.instances {
-            let instance_clone = Arc::clone(instance);
+            let instance = Arc::clone(&instance);
             join_set.spawn(async move {
-                let instance = instance_clone.lock().await;
                 match instance.container_does_not_exist().await {
                     true => Ok(()),
                     false => Err(format!(
                         "Container {} already exists",
-                        instance.service.name
+                        instance.config.service.name
                     )),
                 }
             });
@@ -104,20 +114,18 @@ impl ServicesManager {
         let mut join_set = JoinSet::new();
 
         for this_instance in &self.inner.instances {
-            let this_instance_clone = Arc::clone(this_instance);
+            let this_instance = Arc::clone(this_instance);
             let other_service_names = other.inner.service_names.clone();
             let other_instances = other.inner.instances.clone();
 
             join_set.spawn(async move {
-                let this_instance = this_instance_clone.lock().await;
                 // If the instance is present in other we check for recreation
                 match other_service_names
                     .iter()
                     .zip(other_instances.iter())
-                    .find(|(o, _)| *o == &this_instance.service.name)
+                    .find(|(o, _)| *o == &this_instance.config.service.name)
                 {
                     Some((_, other_instance)) => {
-                        let other_instance = other_instance.lock().await;
                         this_instance.recreate_if_required(&other_instance).await;
                     }
                     None => {
@@ -152,6 +160,7 @@ impl ServicesManager {
         let mut instances = Vec::new();
         let mut networks = Vec::new();
         let mut service_names = Vec::new();
+        let mut router = HashMap::new();
 
         // Ensure the default dispenser network exists first
         // This network is used by all containers for inter-container communication
@@ -194,7 +203,7 @@ impl ServicesManager {
                 let service_name = service_file.service.name.clone();
 
                 // Create the ServiceInstance
-                let instance = ServiceInstance {
+                let config = ServiceInstanceConfig {
                     dir: entry_path,
                     service: service_file.service,
                     ports: service_file.ports,
@@ -204,19 +213,32 @@ impl ServicesManager {
                     network: service_file.network,
                     dispenser: service_file.dispenser,
                     depends_on: service_file.depends_on,
-                    cron_watcher,
-                    image_watcher,
+                    proxy: service_file.proxy,
                 };
 
-                (service_name, Arc::new(Mutex::new(instance)))
+                let service_socket = AtomicOptionSocketAddrV4::new(None);
+
+                let instance = ServiceInstance {
+                    config,
+                    cron_watcher,
+                    image_watcher,
+                    service_socket,
+                };
+
+                (service_name, Arc::new(instance))
             });
         }
 
+        let mut index = 0;
         while let Some(result) = join_set.join_next().await {
             match result {
                 Ok((service_name, instance)) => {
+                    if let Some(proxy_config) = &instance.config.proxy {
+                        router.insert(proxy_config.host.clone(), index);
+                    }
                     service_names.push(service_name);
                     instances.push(instance);
+                    index += 1;
                 }
                 Err(e) => {
                     log::error!("Failed to initialize service: {}", e);
@@ -233,6 +255,7 @@ impl ServicesManager {
             instances,
             networks,
             delay,
+            router,
         };
 
         Ok(ServicesManager {
@@ -264,18 +287,15 @@ impl ServicesManager {
                         last_image_poll = std::time::Instant::now();
                     }
                     // Scope to release the lock
-                    {
-                        let poll_start = std::time::Instant::now();
-                        let mut instance = instance.lock().await;
-                        instance.poll(poll_images, init).await;
-                        let poll_duration = poll_start.elapsed();
-                        log::debug!(
-                            "Polling for {} took {:?}",
-                            instance.service.name,
-                            poll_duration
-                        );
-                        init = false;
-                    }
+                    let poll_start = std::time::Instant::now();
+                    instance.poll(poll_images, init).await;
+                    let poll_duration = poll_start.elapsed();
+                    log::debug!(
+                        "Polling for {} took {:?}",
+                        instance.config.service.name,
+                        poll_duration
+                    );
+                    init = false;
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             })
@@ -307,12 +327,11 @@ impl ServicesManager {
         let mut join_set = JoinSet::new();
 
         for instance in &self.inner.instances {
-            let instance_clone = Arc::clone(instance);
+            let instance = Arc::clone(instance);
             let names_clone = names.clone();
 
             join_set.spawn(async move {
-                let instance = instance_clone.lock().await;
-                if names_clone.contains(&instance.service.name) {
+                if names_clone.contains(&instance.config.service.name) {
                     let _ = instance.stop_container().await;
                     let _ = instance.remove_container().await;
                 }

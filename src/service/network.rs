@@ -31,6 +31,7 @@
 //! or removed by the manager.
 
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 
 use bollard::models::{Ipam, IpamConfig, NetworkCreateRequest};
 use bollard::query_parameters::{
@@ -286,7 +287,9 @@ pub async fn remove_default_network() -> Result<(), ServiceConfigError> {
 ///     println!("Container IP: {}", ip);
 /// }
 /// ```
-pub async fn get_container_ip(container_name: &str) -> Result<Option<String>, ServiceConfigError> {
+pub async fn get_container_ip(
+    container_name: &str,
+) -> Result<Option<Ipv4Addr>, ServiceConfigError> {
     let docker = get_docker();
 
     let options: InspectContainerOptions = InspectContainerOptionsBuilder::new().build();
@@ -299,7 +302,20 @@ pub async fn get_container_ip(container_name: &str) -> Result<Option<String>, Se
             if let Some(network_settings) = info.network_settings {
                 if let Some(networks) = network_settings.networks {
                     if let Some(dispenser_network) = networks.get(DEFAULT_NETWORK_NAME) {
-                        return Ok(dispenser_network.ip_address.clone());
+                        if let Some(ip_string) = &dispenser_network.ip_address {
+                            // Parse the IP address string into an Ipv4Addr
+                            match ip_string.parse::<Ipv4Addr>() {
+                                Ok(ip) => return Ok(Some(ip)),
+                                Err(_) => {
+                                    log::error!(
+                                        "Failed to parse IP address '{}' for container '{}'",
+                                        ip_string,
+                                        container_name
+                                    );
+                                    return Ok(None);
+                                }
+                            }
+                        }
                     }
                 }
             }

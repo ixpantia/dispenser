@@ -1,11 +1,15 @@
 use std::{process::ExitCode, sync::Arc};
 
-use crate::service::{
-    manager::{ServiceMangerConfig, ServicesManager},
-    vars::ServiceConfigError,
+use crate::{
+    proxy::{run_dummy_proxy, run_proxy, ProxySignals},
+    service::{
+        manager::{ServiceMangerConfig, ServicesManager},
+        vars::ServiceConfigError,
+    },
 };
 use tokio::sync::Mutex;
 mod cli;
+mod proxy;
 mod secrets;
 mod service;
 mod signals;
@@ -77,9 +81,31 @@ async fn main() -> ExitCode {
 
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
 
+    let proxy_signals = ProxySignals::new();
+
+    let _ = tokio::task::spawn_blocking({
+        let proxy_signals = proxy_signals.clone();
+        move || run_dummy_proxy(proxy_signals)
+    });
+
     // Main loop: start polling and wait for reload signals
     loop {
         let current_manager = manager_holder.lock().await.clone();
+
+        let _proxy_thread = tokio::task::spawn_blocking({
+            let proxy_signals = proxy_signals.clone();
+            let current_manager = current_manager.clone();
+            move || {
+                run_proxy(current_manager, proxy_signals.clone());
+            }
+        });
+
+        // According to the pingora documentation first we need to start
+        // the new proxy and then send the signal to upgrade.
+        // https://www.pingorarust.com/user_guide/graceful
+        proxy_signals
+            .send_signal(pingora::server::ShutdownSignal::GracefulUpgrade)
+            .await;
 
         tokio::select! {
             _ = current_manager.start_polling() => {

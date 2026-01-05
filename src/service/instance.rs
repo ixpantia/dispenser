@@ -1,3 +1,5 @@
+use std::net::SocketAddrV4;
+use std::sync::atomic::AtomicI64;
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use bollard::models::{
@@ -14,6 +16,9 @@ use chrono::{DateTime, Local};
 use cron::Schedule;
 use futures_util::StreamExt;
 
+use crate::proxy::atomic_socket::AtomicOptionSocketAddrV4;
+use crate::service::cron_watcher::CronWatcher;
+use crate::service::file::ProxySettings;
 use crate::service::network::get_container_ip;
 use crate::service::vars::ServiceConfigError;
 use crate::service::{
@@ -26,31 +31,8 @@ use crate::service::{
     network::DEFAULT_NETWORK_NAME,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CronWatcher {
-    schedule: Schedule,
-    next: Option<DateTime<Local>>,
-}
-
-impl CronWatcher {
-    pub fn new(schedule: &Schedule) -> Self {
-        let schedule = schedule.clone();
-        let next = schedule.upcoming(Local).next();
-        Self { schedule, next }
-    }
-    fn is_ready(&mut self) -> bool {
-        match self.next {
-            Some(next) if chrono::Local::now() >= next => {
-                self.next = self.schedule.upcoming(Local).next();
-                true
-            }
-            Some(_) | None => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServiceInstance {
+#[derive(Debug, PartialEq, Eq)]
+pub struct ServiceInstanceConfig {
     pub dir: PathBuf,
     pub service: ServiceEntry,
     pub ports: Vec<PortEntry>,
@@ -60,8 +42,15 @@ pub struct ServiceInstance {
     pub network: Vec<Network>,
     pub dispenser: DispenserConfig,
     pub depends_on: HashMap<String, DependsOnCondition>,
+    pub proxy: Option<ProxySettings>,
+}
+
+#[derive(Debug)]
+pub struct ServiceInstance {
+    pub config: ServiceInstanceConfig,
     pub cron_watcher: Option<CronWatcher>,
     pub image_watcher: Option<ImageWatcher>,
+    pub service_socket: AtomicOptionSocketAddrV4,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,9 +90,9 @@ async fn get_container_status(container_name: &str) -> Result<ContainerStatus, S
 
 impl ServiceInstance {
     pub async fn run_container(&self) -> Result<(), ServiceConfigError> {
-        let mut depends_on_conditions = Vec::with_capacity(self.depends_on.len());
+        let mut depends_on_conditions = Vec::with_capacity(self.config.depends_on.len());
         loop {
-            for (container, condition) in &self.depends_on {
+            for (container, condition) in &self.config.depends_on {
                 let status = match get_container_status(container).await {
                     Ok(status) => match condition {
                         DependsOnCondition::ServiceStarted => {
@@ -118,7 +107,7 @@ impl ServiceInstance {
                 if !status {
                     log::info!(
                         "Service {} is waiting for {} ({:?})",
-                        self.service.name,
+                        self.config.service.name,
                         container,
                         condition
                     );
@@ -132,7 +121,9 @@ impl ServiceInstance {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
-        if self.dispenser.pull == PullOptions::Always || self.container_does_not_exist().await {
+        if self.config.dispenser.pull == PullOptions::Always
+            || self.container_does_not_exist().await
+        {
             self.recreate_container().await?;
         }
 
@@ -141,23 +132,44 @@ impl ServiceInstance {
         let options: StartContainerOptions = StartContainerOptionsBuilder::new().build();
 
         docker
-            .start_container(&self.service.name, Some(options))
+            .start_container(&self.config.service.name, Some(options))
             .await
             .inspect_err(|e| {
-                log::error!("Failed to start container {}: {}", self.service.name, e);
+                log::error!(
+                    "Failed to start container {}: {}",
+                    self.config.service.name,
+                    e
+                );
             })?;
 
-        log::info!("Container {} started successfully", self.service.name);
+        if let Some(proxy_settings) = &self.config.proxy {
+            if let Some(ip) = get_container_ip(&self.config.service.name).await? {
+                self.service_socket.store(
+                    Some(SocketAddrV4::new(ip, proxy_settings.service_port)),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+        }
+
+        log::info!(
+            "Container {} started successfully",
+            self.config.service.name
+        );
 
         Ok(())
     }
 
+    pub fn get_socket_addr(&self) -> Option<SocketAddrV4> {
+        self.service_socket
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub async fn pull_image(&self) -> Result<(), ServiceConfigError> {
-        log::info!("Pulling image: {}", self.service.image);
+        log::info!("Pulling image: {}", self.config.service.image);
         let docker = get_docker();
 
         // Parse image name and tag
-        let (image, tag) = parse_image_reference(&self.service.image);
+        let (image, tag) = parse_image_reference(&self.config.service.image);
 
         let options: CreateImageOptions = CreateImageOptionsBuilder::new()
             .from_image(image)
@@ -174,62 +186,75 @@ impl ServiceInstance {
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to pull image {}: {}", self.service.image, e);
+                    log::error!("Failed to pull image {}: {}", self.config.service.image, e);
                     return Err(ServiceConfigError::DockerApi(e));
                 }
             }
         }
 
-        log::info!("Image {} pulled successfully", self.service.image);
+        log::info!("Image {} pulled successfully", self.config.service.image);
         Ok(())
     }
 
     pub async fn stop_container(&self) -> Result<(), ServiceConfigError> {
-        log::info!("Stopping container: {}", self.service.name);
+        log::info!("Stopping container: {}", self.config.service.name);
         let docker = get_docker();
 
         let options: StopContainerOptions = StopContainerOptionsBuilder::new().t(10).build();
 
         match docker
-            .stop_container(&self.service.name, Some(options))
+            .stop_container(&self.config.service.name, Some(options))
             .await
         {
             Ok(_) => {
-                log::info!("Container {} stopped successfully", self.service.name);
+                log::info!(
+                    "Container {} stopped successfully",
+                    self.config.service.name
+                );
                 Ok(())
             }
             Err(bollard::errors::Error::DockerResponseServerError {
                 status_code: 404, ..
             }) => {
-                log::warn!("Container {} not found, skipping stop", self.service.name);
+                log::warn!(
+                    "Container {} not found, skipping stop",
+                    self.config.service.name
+                );
                 Ok(())
             }
             Err(bollard::errors::Error::DockerResponseServerError {
                 status_code: 304, ..
             }) => {
-                log::info!("Container {} already stopped", self.service.name);
+                log::info!("Container {} already stopped", self.config.service.name);
                 Ok(())
             }
             Err(e) => {
-                log::warn!("Failed to stop container {}: {}", self.service.name, e);
+                log::warn!(
+                    "Failed to stop container {}: {}",
+                    self.config.service.name,
+                    e
+                );
                 Err(ServiceConfigError::DockerApi(e))
             }
         }
     }
 
     pub async fn remove_container(&self) -> Result<(), ServiceConfigError> {
-        log::info!("Removing container: {}", self.service.name);
+        log::info!("Removing container: {}", self.config.service.name);
         let docker = get_docker();
 
         let options: RemoveContainerOptions =
             RemoveContainerOptionsBuilder::new().force(true).build();
 
         match docker
-            .remove_container(&self.service.name, Some(options))
+            .remove_container(&self.config.service.name, Some(options))
             .await
         {
             Ok(_) => {
-                log::info!("Container {} removed successfully", self.service.name);
+                log::info!(
+                    "Container {} removed successfully",
+                    self.config.service.name
+                );
                 Ok(())
             }
             Err(bollard::errors::Error::DockerResponseServerError {
@@ -237,26 +262,30 @@ impl ServiceInstance {
             }) => {
                 log::info!(
                     "Container {} not found, skipping removal",
-                    self.service.name
+                    self.config.service.name
                 );
                 Ok(())
             }
             Err(e) => {
-                log::error!("Failed to remove container {}: {}", self.service.name, e);
+                log::error!(
+                    "Failed to remove container {}: {}",
+                    self.config.service.name,
+                    e
+                );
                 Err(ServiceConfigError::DockerApi(e))
             }
         }
     }
 
     pub async fn create_container(&self) -> Result<(), ServiceConfigError> {
-        log::info!("Creating container: {}", self.service.name);
+        log::info!("Creating container: {}", self.config.service.name);
         let docker = get_docker();
 
         // Build port bindings
         let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
         let mut exposed_ports: HashMap<String, HashMap<(), ()>> = HashMap::new();
 
-        for port in &self.ports {
+        for port in &self.config.ports {
             let container_port = format!("{}/tcp", port.container);
             exposed_ports.insert(container_port.clone(), HashMap::new());
             port_bindings.insert(
@@ -270,10 +299,11 @@ impl ServiceInstance {
 
         // Build volume bindings
         let binds: Vec<String> = self
+            .config
             .volume
             .iter()
             .map(|v| {
-                let source = v.normalized_source(&self.dir)?;
+                let source = v.normalized_source(&self.config.dir)?;
                 if v.readonly {
                     Ok(format!("{}:{}:ro", source, v.target))
                 } else {
@@ -284,13 +314,14 @@ impl ServiceInstance {
 
         // Build environment variables
         let env: Vec<String> = self
+            .config
             .env
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
 
         // Build restart policy
-        let restart_policy = match self.restart {
+        let restart_policy = match self.config.restart {
             Restart::Always => Some(RestartPolicy {
                 name: Some(RestartPolicyNameEnum::ALWAYS),
                 maximum_retry_count: None,
@@ -310,10 +341,15 @@ impl ServiceInstance {
         };
 
         // Parse memory limit
-        let memory = self.service.memory.as_ref().map(|m| parse_memory_limit(m));
+        let memory = self
+            .config
+            .service
+            .memory
+            .as_ref()
+            .map(|m| parse_memory_limit(m));
 
         // Parse CPU limit (convert to nano CPUs)
-        let nano_cpus = self.service.cpus.as_ref().map(|c| {
+        let nano_cpus = self.config.service.cpus.as_ref().map(|c| {
             let cpus: f64 = c.parse().unwrap_or(1.0);
             (cpus * 1_000_000_000.0) as i64
         });
@@ -347,13 +383,13 @@ impl ServiceInstance {
 
         // Build container config
         let config = ContainerCreateBody {
-            image: Some(self.service.image.clone()),
-            hostname: self.service.hostname.clone(),
-            user: self.service.user.clone(),
-            working_dir: self.service.working_dir.clone(),
+            image: Some(self.config.service.image.clone()),
+            hostname: self.config.service.hostname.clone(),
+            user: self.config.service.user.clone(),
+            working_dir: self.config.service.working_dir.clone(),
             env: if env.is_empty() { None } else { Some(env) },
-            cmd: self.service.command.clone(),
-            entrypoint: self.service.entrypoint.clone(),
+            cmd: self.config.service.command.clone(),
+            entrypoint: self.config.service.entrypoint.clone(),
             exposed_ports: if exposed_ports.is_empty() {
                 None
             } else {
@@ -365,15 +401,15 @@ impl ServiceInstance {
         };
 
         let options: CreateContainerOptions = CreateContainerOptionsBuilder::new()
-            .name(&self.service.name)
+            .name(&self.config.service.name)
             .build();
 
         docker.create_container(Some(options), config).await?;
 
         // Connect to user-defined networks (default dispenser network is already connected)
-        for network in &self.network {
+        for network in &self.config.network {
             let connect_request = NetworkConnectRequest {
-                container: Some(self.service.name.clone()),
+                container: Some(self.config.service.name.clone()),
                 endpoint_config: Some(EndpointSettings::default()),
             };
 
@@ -383,14 +419,17 @@ impl ServiceInstance {
                 .inspect_err(|e| {
                     log::warn!(
                         "Failed to connect container {} to network {}: {}",
-                        self.service.name,
+                        self.config.service.name,
                         network.name,
                         e
                     );
                 })?;
         }
 
-        log::info!("Container {} created successfully", self.service.name);
+        log::info!(
+            "Container {} created successfully",
+            self.config.service.name
+        );
         Ok(())
     }
 
@@ -408,7 +447,7 @@ impl ServiceInstance {
         let options: InspectContainerOptions = InspectContainerOptionsBuilder::new().build();
 
         match docker
-            .inspect_container(&self.service.name, Some(options))
+            .inspect_container(&self.config.service.name, Some(options))
             .await
         {
             Ok(_) => false,
@@ -417,12 +456,16 @@ impl ServiceInstance {
             }) => {
                 log::info!(
                     "Container {} does not exist, needs creation",
-                    self.service.name
+                    self.config.service.name
                 );
                 true
             }
             Err(e) => {
-                log::warn!("Failed to inspect container {}: {}", self.service.name, e);
+                log::warn!(
+                    "Failed to inspect container {}: {}",
+                    self.config.service.name,
+                    e
+                );
                 true // If we can't inspect, assume recreate is needed
             }
         }
@@ -436,34 +479,42 @@ impl ServiceInstance {
         }
         // If self and other are not equal we need to recreate the
         // container
-        self != other
+        self.config != other.config
     }
 
     pub async fn recreate_if_required(&self, other: &Self) {
         if self.requires_recreate(other).await {
             if let Err(e) = self.recreate_container().await {
-                log::error!("Failed to recreate container {}: {}", self.service.name, e);
+                log::error!(
+                    "Failed to recreate container {}: {}",
+                    self.config.service.name,
+                    e
+                );
             }
         }
     }
 
-    pub async fn poll(&mut self, poll_images: bool, init: bool) {
-        if init && self.dispenser.initialize == Initialize::Immediately {
-            log::info!("Starting {} immediately", self.service.name);
+    pub async fn poll(&self, poll_images: bool, init: bool) {
+        if init && self.config.dispenser.initialize == Initialize::Immediately {
+            log::info!("Starting {} immediately", self.config.service.name);
             if let Err(e) = self.run_container().await {
-                log::error!("Failed to run container {}: {}", self.service.name, e);
+                log::error!(
+                    "Failed to run container {}: {}",
+                    self.config.service.name,
+                    e
+                );
             }
             return;
         }
 
         // If uses cron
-        if let Some(cron_watcher) = &mut self.cron_watcher {
+        if let Some(cron_watcher) = &self.cron_watcher {
             if cron_watcher.is_ready() {
                 // If the cron matches we can short circuit the function
                 if let Err(e) = self.run_container().await {
                     log::error!(
                         "Failed to run container {} from cron: {}",
-                        self.service.name,
+                        self.config.service.name,
                         e
                     );
                 }
@@ -473,29 +524,33 @@ impl ServiceInstance {
         }
 
         // If its ready to poll images
-        if self.dispenser.watch && poll_images {
+        if self.config.dispenser.watch && poll_images {
             // try to update the watchers and check
             // if any of them were updated
-            if let Some(image_watcher) = &mut self.image_watcher {
+            if let Some(image_watcher) = &self.image_watcher {
                 match image_watcher.update().await {
                     ImageWatcherStatus::Updated => {
                         log::info!(
                             "Image updated for service {}, recreating container...",
-                            self.service.name
+                            self.config.service.name
                         );
                         if let Err(e) = self.recreate_container().await {
                             log::error!(
                                 "Failed to recreate container {}: {}",
-                                self.service.name,
+                                self.config.service.name,
                                 e
                             );
                         }
                         if let Err(e) = self.run_container().await {
-                            log::error!("Failed to run container {}: {}", self.service.name, e);
+                            log::error!(
+                                "Failed to run container {}: {}",
+                                self.config.service.name,
+                                e
+                            );
                         }
                     }
                     ImageWatcherStatus::Deleted => {
-                        log::warn!("Image for service {} was deleted", self.service.name);
+                        log::warn!("Image for service {} was deleted", self.config.service.name);
                     }
                     ImageWatcherStatus::NotUpdated => {}
                 }
