@@ -1,17 +1,20 @@
-use std::{collections::HashMap, net::SocketAddrV4, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    net::{Ipv4Addr, SocketAddrV4},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
 use tokio::{sync::Mutex, task::JoinSet};
 
-use crate::{
-    proxy::atomic_socket::AtomicOptionSocketAddrV4,
-    service::{
-        cron_watcher::CronWatcher,
-        file::{EntrypointFile, ServiceFile},
-        instance::{ServiceInstance, ServiceInstanceConfig},
-        manifest::ImageWatcher,
-        network::{ensure_default_network, remove_default_network, NetworkInstance},
-        vars::{render_template, ServiceConfigError, ServiceVarsMaterialized},
-    },
+use crate::service::{
+    cron_watcher::CronWatcher,
+    file::{EntrypointFile, ServiceFile},
+    instance::{ServiceInstance, ServiceInstanceConfig},
+    manifest::ImageWatcher,
+    network::{ensure_default_network, remove_default_network, NetworkInstance},
+    vars::{render_template, ServiceConfigError, ServiceVarsMaterialized},
 };
 
 pub struct ServiceMangerConfig {
@@ -154,7 +157,21 @@ impl ServicesManager {
 
         self.remove_containers(removed_services).await;
     }
-    pub async fn from_config(config: ServiceMangerConfig) -> Result<Self, ServiceConfigError> {
+    /// Get a map of service names to their assigned IP addresses.
+    /// This is used during reload to preserve IP assignments for existing services.
+    pub fn get_ip_map(&self) -> HashMap<String, Ipv4Addr> {
+        self.inner
+            .service_names
+            .iter()
+            .zip(self.inner.instances.iter())
+            .map(|(name, instance)| (name.clone(), instance.config.assigned_ip))
+            .collect()
+    }
+
+    pub async fn from_config(
+        config: ServiceMangerConfig,
+        existing_ips: Option<HashMap<String, Ipv4Addr>>,
+    ) -> Result<Self, ServiceConfigError> {
         // Get the delay from config (in seconds)
         let delay = Duration::from_secs(config.entrypoint_file.delay);
         let mut instances = Vec::new();
@@ -183,10 +200,18 @@ impl ServicesManager {
             }
         }
 
+        // Allocate IP addresses using "Reserve then Fill" strategy
+        let assigned_ips = allocate_ips(&config.services, existing_ips);
+
         // Iterate through each service entry in the config
         let mut join_set = JoinSet::new();
 
         for (entry_path, service_file) in config.services {
+            // Get the assigned IP for this service
+            let assigned_ip = assigned_ips
+                .get(&service_file.service.name)
+                .copied()
+                .expect("IP should have been allocated for all services");
             join_set.spawn(async move {
                 log::debug!("Initializing config for {entry_path:?}");
 
@@ -214,15 +239,13 @@ impl ServicesManager {
                     dispenser: service_file.dispenser,
                     depends_on: service_file.depends_on,
                     proxy: service_file.proxy,
+                    assigned_ip,
                 };
 
-                let service_socket = AtomicOptionSocketAddrV4::new(None);
-
                 let instance = ServiceInstance {
-                    config,
+                    config: Arc::new(config),
                     cron_watcher,
                     image_watcher,
-                    service_socket,
                 };
 
                 (service_name, Arc::new(instance))
@@ -354,5 +377,233 @@ impl ServicesManager {
         if let Err(e) = remove_default_network().await {
             log::warn!("Failed to remove default dispenser network: {}", e);
         }
+    }
+}
+
+/// Allocate IP addresses to services using "Reserve then Fill" strategy.
+///
+/// This ensures that:
+/// 1. Existing services keep their IP addresses (Reserve phase)
+/// 2. New services get the lowest available IP addresses (Fill phase)
+///
+/// The subnet is 172.28.0.0/16 with gateway at 172.28.0.1, so we start from 172.28.0.2.
+fn allocate_ips(
+    services: &[(PathBuf, crate::service::file::ServiceFile)],
+    existing_ips: Option<HashMap<String, Ipv4Addr>>,
+) -> HashMap<String, Ipv4Addr> {
+    let mut assigned: HashMap<String, Ipv4Addr> = HashMap::new();
+    let mut used_ips: HashSet<Ipv4Addr> = HashSet::new();
+
+    // Base IP: 172.28.0.0
+    let base_ip: u32 = u32::from(Ipv4Addr::new(172, 28, 0, 0));
+
+    // Reserve the gateway IP (172.28.0.1)
+    used_ips.insert(Ipv4Addr::new(172, 28, 0, 1));
+
+    let existing = existing_ips.unwrap_or_default();
+
+    // Reserve Phase: Preserve IPs for existing services
+    for (_, service_file) in services {
+        let service_name = &service_file.service.name;
+        if let Some(&existing_ip) = existing.get(service_name) {
+            assigned.insert(service_name.clone(), existing_ip);
+            used_ips.insert(existing_ip);
+            log::debug!(
+                "Reserved existing IP {} for service {}",
+                existing_ip,
+                service_name
+            );
+        }
+    }
+
+    // Fill Phase: Assign new IPs to services that don't have one
+    // Start from 172.28.0.2 (offset 2 from base)
+    let mut next_offset: u32 = 2;
+
+    for (_, service_file) in services {
+        let service_name = &service_file.service.name;
+        if assigned.contains_key(service_name) {
+            continue; // Already assigned in reserve phase
+        }
+
+        // Find the next available IP
+        loop {
+            let candidate_ip = Ipv4Addr::from(base_ip + next_offset);
+            next_offset += 1;
+
+            // Check if we've exceeded the subnet (unlikely with /16)
+            if next_offset > 65534 {
+                panic!("Exhausted all available IPs in the dispenser subnet");
+            }
+
+            if !used_ips.contains(&candidate_ip) {
+                assigned.insert(service_name.clone(), candidate_ip);
+                used_ips.insert(candidate_ip);
+                log::debug!(
+                    "Assigned new IP {} to service {}",
+                    candidate_ip,
+                    service_name
+                );
+                break;
+            }
+        }
+    }
+
+    assigned
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::file::{DispenserConfig, PullOptions, Restart, ServiceEntry, ServiceFile};
+
+    fn make_service_file(name: &str) -> ServiceFile {
+        ServiceFile {
+            service: ServiceEntry {
+                name: name.to_string(),
+                image: "test:latest".to_string(),
+                hostname: None,
+                user: None,
+                working_dir: None,
+                command: None,
+                entrypoint: None,
+                memory: None,
+                cpus: None,
+            },
+            ports: vec![],
+            volume: vec![],
+            env: HashMap::new(),
+            restart: Restart::No,
+            network: vec![],
+            dispenser: DispenserConfig {
+                watch: false,
+                cron: None,
+                pull: PullOptions::OnStartup,
+                initialize: crate::service::file::Initialize::default(),
+            },
+            depends_on: HashMap::new(),
+            proxy: None,
+        }
+    }
+
+    #[test]
+    fn test_allocate_ips_new_services() {
+        let services = vec![
+            (PathBuf::from("/a"), make_service_file("service-a")),
+            (PathBuf::from("/b"), make_service_file("service-b")),
+            (PathBuf::from("/c"), make_service_file("service-c")),
+        ];
+
+        let assigned = allocate_ips(&services, None);
+
+        assert_eq!(assigned.len(), 3);
+        assert_eq!(
+            assigned.get("service-a"),
+            Some(&Ipv4Addr::new(172, 28, 0, 2))
+        );
+        assert_eq!(
+            assigned.get("service-b"),
+            Some(&Ipv4Addr::new(172, 28, 0, 3))
+        );
+        assert_eq!(
+            assigned.get("service-c"),
+            Some(&Ipv4Addr::new(172, 28, 0, 4))
+        );
+    }
+
+    #[test]
+    fn test_allocate_ips_preserves_existing() {
+        let services = vec![
+            (PathBuf::from("/a"), make_service_file("service-a")),
+            (PathBuf::from("/b"), make_service_file("service-b")),
+            (PathBuf::from("/c"), make_service_file("service-c")),
+        ];
+
+        let mut existing = HashMap::new();
+        existing.insert("service-b".to_string(), Ipv4Addr::new(172, 28, 0, 10));
+
+        let assigned = allocate_ips(&services, Some(existing));
+
+        assert_eq!(assigned.len(), 3);
+        // service-a gets the first available IP
+        assert_eq!(
+            assigned.get("service-a"),
+            Some(&Ipv4Addr::new(172, 28, 0, 2))
+        );
+        // service-b keeps its existing IP
+        assert_eq!(
+            assigned.get("service-b"),
+            Some(&Ipv4Addr::new(172, 28, 0, 10))
+        );
+        // service-c gets the next available IP
+        assert_eq!(
+            assigned.get("service-c"),
+            Some(&Ipv4Addr::new(172, 28, 0, 3))
+        );
+    }
+
+    #[test]
+    fn test_allocate_ips_skips_used_ips() {
+        let services = vec![
+            (PathBuf::from("/a"), make_service_file("service-a")),
+            (PathBuf::from("/b"), make_service_file("service-b")),
+            (PathBuf::from("/c"), make_service_file("service-c")),
+        ];
+
+        let mut existing = HashMap::new();
+        // Reserve IP .2 for service-b (which is processed second)
+        existing.insert("service-b".to_string(), Ipv4Addr::new(172, 28, 0, 2));
+
+        let assigned = allocate_ips(&services, Some(existing));
+
+        assert_eq!(assigned.len(), 3);
+        // service-a should skip .2 (used by service-b) and get .3
+        assert_eq!(
+            assigned.get("service-a"),
+            Some(&Ipv4Addr::new(172, 28, 0, 3))
+        );
+        // service-b keeps its reserved IP
+        assert_eq!(
+            assigned.get("service-b"),
+            Some(&Ipv4Addr::new(172, 28, 0, 2))
+        );
+        // service-c gets .4
+        assert_eq!(
+            assigned.get("service-c"),
+            Some(&Ipv4Addr::new(172, 28, 0, 4))
+        );
+    }
+
+    #[test]
+    fn test_allocate_ips_ignores_stale_existing() {
+        // Test that existing IPs for services no longer in the config are ignored
+        let services = vec![(PathBuf::from("/a"), make_service_file("service-a"))];
+
+        let mut existing = HashMap::new();
+        existing.insert("service-removed".to_string(), Ipv4Addr::new(172, 28, 0, 5));
+
+        let assigned = allocate_ips(&services, Some(existing));
+
+        assert_eq!(assigned.len(), 1);
+        // service-a gets .2 (the removed service's IP is not reserved)
+        assert_eq!(
+            assigned.get("service-a"),
+            Some(&Ipv4Addr::new(172, 28, 0, 2))
+        );
+    }
+
+    #[test]
+    fn test_allocate_ips_gateway_reserved() {
+        // Ensure gateway IP (172.28.0.1) is never assigned
+        let services = vec![(PathBuf::from("/a"), make_service_file("service-a"))];
+
+        let assigned = allocate_ips(&services, None);
+
+        assert_eq!(assigned.len(), 1);
+        // Should start from .2, not .1 (gateway)
+        assert_eq!(
+            assigned.get("service-a"),
+            Some(&Ipv4Addr::new(172, 28, 0, 2))
+        );
     }
 }

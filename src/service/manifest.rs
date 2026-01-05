@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use bollard::query_parameters::{CreateImageOptions, CreateImageOptionsBuilder};
 use futures_util::StreamExt;
 use thiserror::Error;

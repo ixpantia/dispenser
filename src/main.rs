@@ -54,7 +54,8 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let manager = match ServicesManager::from_config(service_manager_config).await {
+    // On initial startup, there are no existing IPs to preserve
+    let manager = match ServicesManager::from_config(service_manager_config, None).await {
         Ok(manager) => Arc::new(manager),
         Err(e) => {
             log::error!("Failed to create services manager: {e}");

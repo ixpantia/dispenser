@@ -1,10 +1,9 @@
-use std::net::SocketAddrV4;
-use std::sync::atomic::AtomicI64;
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::net::{Ipv4Addr, SocketAddrV4};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use bollard::models::{
-    ContainerCreateBody, EndpointSettings, HostConfig, NetworkConnectRequest, NetworkingConfig,
-    PortBinding, RestartPolicy, RestartPolicyNameEnum,
+    ContainerCreateBody, EndpointIpamConfig, EndpointSettings, HostConfig, NetworkConnectRequest,
+    NetworkingConfig, PortBinding, RestartPolicy, RestartPolicyNameEnum,
 };
 use bollard::query_parameters::{
     CreateContainerOptions, CreateContainerOptionsBuilder, CreateImageOptions,
@@ -12,14 +11,10 @@ use bollard::query_parameters::{
     RemoveContainerOptions, RemoveContainerOptionsBuilder, StartContainerOptions,
     StartContainerOptionsBuilder, StopContainerOptions, StopContainerOptionsBuilder,
 };
-use chrono::{DateTime, Local};
-use cron::Schedule;
 use futures_util::StreamExt;
 
-use crate::proxy::atomic_socket::AtomicOptionSocketAddrV4;
 use crate::service::cron_watcher::CronWatcher;
 use crate::service::file::ProxySettings;
-use crate::service::network::get_container_ip;
 use crate::service::vars::ServiceConfigError;
 use crate::service::{
     docker::get_docker,
@@ -43,14 +38,16 @@ pub struct ServiceInstanceConfig {
     pub dispenser: DispenserConfig,
     pub depends_on: HashMap<String, DependsOnCondition>,
     pub proxy: Option<ProxySettings>,
+    /// The static IP address assigned to this service on the dispenser network.
+    /// This is managed by dispenser's IPAM to ensure stability across restarts.
+    pub assigned_ip: Ipv4Addr,
 }
 
 #[derive(Debug)]
 pub struct ServiceInstance {
-    pub config: ServiceInstanceConfig,
+    pub config: Arc<ServiceInstanceConfig>,
     pub cron_watcher: Option<CronWatcher>,
     pub image_watcher: Option<ImageWatcher>,
-    pub service_socket: AtomicOptionSocketAddrV4,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,15 +139,6 @@ impl ServiceInstance {
                 );
             })?;
 
-        if let Some(proxy_settings) = &self.config.proxy {
-            if let Some(ip) = get_container_ip(&self.config.service.name).await? {
-                self.service_socket.store(
-                    Some(SocketAddrV4::new(ip, proxy_settings.service_port)),
-                    std::sync::atomic::Ordering::SeqCst,
-                );
-            }
-        }
-
         log::info!(
             "Container {} started successfully",
             self.config.service.name
@@ -159,9 +147,12 @@ impl ServiceInstance {
         Ok(())
     }
 
+    /// Get the socket address for this service if proxy is configured.
+    /// The address is computed directly from the static IP and service port.
     pub fn get_socket_addr(&self) -> Option<SocketAddrV4> {
-        self.service_socket
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.config.proxy.as_ref().map(|proxy_settings| {
+            SocketAddrV4::new(self.config.assigned_ip, proxy_settings.service_port)
+        })
     }
 
     pub async fn pull_image(&self) -> Result<(), ServiceConfigError> {
@@ -370,11 +361,17 @@ impl ServiceInstance {
             ..Default::default()
         };
 
-        // Build networking config to attach to the default dispenser network
+        // Build networking config to attach to the default dispenser network with static IP
         let mut endpoints_config: HashMap<String, EndpointSettings> = HashMap::new();
         endpoints_config.insert(
             DEFAULT_NETWORK_NAME.to_string(),
-            EndpointSettings::default(),
+            EndpointSettings {
+                ipam_config: Some(EndpointIpamConfig {
+                    ipv4_address: Some(self.config.assigned_ip.to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
         );
 
         let networking_config = NetworkingConfig {

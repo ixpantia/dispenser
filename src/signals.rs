@@ -80,6 +80,12 @@ pub async fn reload_manager(
 
     log::info!("Reloading configuration...");
 
+    // Snapshot the existing IP assignments before loading new config
+    let existing_ips = {
+        let manager = manager_holder.lock().await;
+        manager.get_ip_map()
+    };
+
     // Load the new configuration
     let service_manager_config = match ServiceMangerConfig::try_init().await {
         Ok(entrypoint_file) => entrypoint_file,
@@ -90,15 +96,16 @@ pub async fn reload_manager(
         }
     };
 
-    // Create a new manager with the new configuration
-    let new_manager = match ServicesManager::from_config(service_manager_config).await {
-        Ok(manager) => Arc::new(manager),
-        Err(e) => {
-            log::error!("Failed to create new services manager: {e}");
-            let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
-            return Err(format!("Failed to create new services manager: {e}"));
-        }
-    };
+    // Create a new manager with the new configuration, passing existing IPs
+    let new_manager =
+        match ServicesManager::from_config(service_manager_config, Some(existing_ips)).await {
+            Ok(manager) => Arc::new(manager),
+            Err(e) => {
+                log::error!("Failed to create new services manager: {e}");
+                let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
+                return Err(format!("Failed to create new services manager: {e}"));
+            }
+        };
 
     log::info!("New configuration loaded successfully");
 

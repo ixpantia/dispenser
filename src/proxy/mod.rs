@@ -1,11 +1,8 @@
-pub mod atomic_socket;
-
 use async_trait::async_trait;
-use log::info;
 use pingora::listeners::tls::TlsSettings;
 use pingora::server::{RunArgs, ShutdownSignal};
 use pingora_error::ErrorType::HTTPStatus;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 use pingora_core::server::configuration::Opt;
 use pingora_core::server::Server;

@@ -31,13 +31,9 @@
 //! or removed by the manager.
 
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
 
 use bollard::models::{Ipam, IpamConfig, NetworkCreateRequest};
-use bollard::query_parameters::{
-    InspectContainerOptions, InspectContainerOptionsBuilder, InspectNetworkOptions,
-    InspectNetworkOptionsBuilder,
-};
+use bollard::query_parameters::{InspectNetworkOptions, InspectNetworkOptionsBuilder};
 
 use crate::service::vars::ServiceConfigError;
 use crate::service::{
@@ -270,97 +266,4 @@ pub async fn ensure_default_network() -> Result<(), ServiceConfigError> {
 pub async fn remove_default_network() -> Result<(), ServiceConfigError> {
     let default_network = NetworkInstance::default_network();
     default_network.remove_network().await
-}
-
-/// Get the IP address of a container on the default dispenser network.
-///
-/// Returns `None` if the container is not found or not connected to the dispenser network.
-///
-/// # Arguments
-///
-/// * `container_name` - The name of the container to get the IP address for.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// if let Some(ip) = get_container_ip("my-app").await? {
-///     println!("Container IP: {}", ip);
-/// }
-/// ```
-pub async fn get_container_ip(
-    container_name: &str,
-) -> Result<Option<Ipv4Addr>, ServiceConfigError> {
-    let docker = get_docker();
-
-    let options: InspectContainerOptions = InspectContainerOptionsBuilder::new().build();
-
-    match docker
-        .inspect_container(container_name, Some(options))
-        .await
-    {
-        Ok(info) => {
-            if let Some(network_settings) = info.network_settings {
-                if let Some(networks) = network_settings.networks {
-                    if let Some(dispenser_network) = networks.get(DEFAULT_NETWORK_NAME) {
-                        if let Some(ip_string) = &dispenser_network.ip_address {
-                            // Parse the IP address string into an Ipv4Addr
-                            match ip_string.parse::<Ipv4Addr>() {
-                                Ok(ip) => return Ok(Some(ip)),
-                                Err(_) => {
-                                    log::error!(
-                                        "Failed to parse IP address '{}' for container '{}'",
-                                        ip_string,
-                                        container_name
-                                    );
-                                    return Ok(None);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(None)
-        }
-        Err(bollard::errors::Error::DockerResponseServerError {
-            status_code: 404, ..
-        }) => Ok(None),
-        Err(e) => Err(ServiceConfigError::DockerApi(e)),
-    }
-}
-
-/// Get all container IP addresses on the default dispenser network.
-///
-/// Returns a map of container name to IP address for all containers
-/// connected to the dispenser network.
-pub async fn get_all_container_ips() -> Result<HashMap<String, String>, ServiceConfigError> {
-    let docker = get_docker();
-
-    let options: InspectNetworkOptions = InspectNetworkOptionsBuilder::new().build();
-
-    match docker
-        .inspect_network(DEFAULT_NETWORK_NAME, Some(options))
-        .await
-    {
-        Ok(network) => {
-            let mut ips = HashMap::new();
-
-            if let Some(containers) = network.containers {
-                for (_, container_info) in containers {
-                    if let (Some(name), Some(ip)) =
-                        (container_info.name, container_info.ipv4_address)
-                    {
-                        // Remove the CIDR suffix if present (e.g., "172.28.0.2/16" -> "172.28.0.2")
-                        let ip_only = ip.split('/').next().unwrap_or(&ip).to_string();
-                        ips.insert(name, ip_only);
-                    }
-                }
-            }
-
-            Ok(ips)
-        }
-        Err(bollard::errors::Error::DockerResponseServerError {
-            status_code: 404, ..
-        }) => Ok(HashMap::new()),
-        Err(e) => Err(ServiceConfigError::DockerApi(e)),
-    }
 }
