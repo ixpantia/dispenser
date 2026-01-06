@@ -24,6 +24,7 @@ pub struct DispenserProxy {
     pub services_manager: Arc<ServicesManager>,
     pub is_ssl: bool,
     pub strategy: ProxyStrategy,
+    pub trust_forwarded_headers: bool,
 }
 
 #[async_trait]
@@ -107,12 +108,43 @@ impl ProxyHttp for DispenserProxy {
 
     async fn upstream_request_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_request: &mut RequestHeader,
         _ctx: &mut Self::CTX,
     ) -> Result<()> {
         let proto = if self.is_ssl { "https" } else { "http" };
         upstream_request.insert_header("X-Forwarded-Proto", HeaderValue::from_static(proto))?;
+
+        if let Some(client_addr) = session.client_addr() {
+            let client_ip = match client_addr {
+                pingora::protocols::l4::socket::SocketAddr::Inet(addr) => addr.ip().to_string(),
+                _ => client_addr.to_string(),
+            };
+
+            // X-Forwarded-For
+            let xff_value = if self.trust_forwarded_headers {
+                upstream_request
+                    .headers
+                    .get("X-Forwarded-For")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|v| format!("{}, {}", v, client_ip))
+                    .unwrap_or_else(|| client_ip.clone())
+            } else {
+                client_ip.clone()
+            };
+            if let Ok(val) = HeaderValue::from_str(&xff_value) {
+                upstream_request.insert_header("X-Forwarded-For", val)?;
+            }
+
+            // X-Real-IP
+            if !self.trust_forwarded_headers || upstream_request.headers.get("X-Real-IP").is_none()
+            {
+                if let Ok(val) = HeaderValue::from_str(&client_ip) {
+                    upstream_request.insert_header("X-Real-IP", val)?;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -189,12 +221,14 @@ pub fn run_proxy(services_manager: Arc<ServicesManager>, signals: ProxySignals) 
     let opt = Opt::default();
     let mut my_server = Server::new(Some(opt)).unwrap();
     let strategy = services_manager.get_proxy_strategy();
+    let trust_forwarded_headers = services_manager.get_trust_forwarded_headers();
 
     // 1. Setup HTTP Proxy (Port 80)
     let http_proxy = DispenserProxy {
         services_manager: services_manager.clone(),
         is_ssl: false,
         strategy,
+        trust_forwarded_headers,
     };
     let mut http_service = http_proxy_service(&my_server.configuration, http_proxy);
     http_service.add_tcp("0.0.0.0:80");
@@ -210,6 +244,7 @@ pub fn run_proxy(services_manager: Arc<ServicesManager>, signals: ProxySignals) 
             services_manager: services_manager.clone(),
             is_ssl: true,
             strategy,
+            trust_forwarded_headers,
         };
         let mut https_service = http_proxy_service(&my_server.configuration, https_proxy);
 

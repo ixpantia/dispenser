@@ -25,6 +25,8 @@ The `strategy` field determines how Dispenser handles HTTP (80) and HTTPS (443) 
 enabled = true
 # Available options: "https-only", "http-only", "both"
 strategy = "https-only"
+# If true, trust incoming X-Forwarded-For and X-Real-IP headers (Default: false)
+trust_forwarded_headers = false
 ```
 
 | Strategy | Behavior |
@@ -32,6 +34,25 @@ strategy = "https-only"
 | `https-only` | (Default) Port 80 redirects all traffic to Port 443. SSL is required. |
 | `http-only` | Port 80 serves application traffic. Port 443 and SSL management are disabled. |
 | `both` | Both ports serve application traffic. No automatic redirects occur. |
+
+### Forwarded Headers and Trust
+
+When proxying requests, Dispenser automatically adds headers to identify the original client:
+
+- `X-Forwarded-Proto`: Set to `https` or `http` based on the incoming connection.
+- `X-Forwarded-For`: The IP address of the client.
+- `X-Real-IP`: The IP address of the client.
+
+By default, Dispenser **overwrites** these headers to prevent clients from spoofing their IP address. If Dispenser is running behind another load balancer (like Cloudflare or an AWS ALB), you should enable trust for these headers:
+
+```toml
+[proxy]
+trust_forwarded_headers = true
+```
+
+When `trust_forwarded_headers` is `true`:
+- `X-Forwarded-For`: The client IP is **appended** to the existing list.
+- `X-Real-IP`: The existing value is **preserved** if present.
 
 ### Global Toggle
 

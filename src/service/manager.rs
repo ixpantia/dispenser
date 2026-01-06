@@ -228,6 +228,10 @@ impl ServicesManager {
         self.inner.proxy.strategy
     }
 
+    pub fn get_trust_forwarded_headers(&self) -> bool {
+        self.inner.proxy.trust_forwarded_headers
+    }
+
     pub async fn from_config(
         mut config: ServiceMangerConfig,
         existing_ips: Option<HashMap<String, Ipv4Addr>>,

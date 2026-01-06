@@ -38,6 +38,8 @@ pub struct GlobalProxyConfig {
     pub enabled: bool,
     #[serde(default)]
     pub strategy: ProxyStrategy,
+    #[serde(default = "default_false")]
+    pub trust_forwarded_headers: bool,
 }
 
 impl Default for GlobalProxyConfig {
@@ -45,6 +47,7 @@ impl Default for GlobalProxyConfig {
         Self {
             enabled: true,
             strategy: ProxyStrategy::default(),
+            trust_forwarded_headers: false,
         }
     }
 }
