@@ -195,6 +195,10 @@ impl ServicesManager {
         self.inner.certbot.clone()
     }
 
+    pub fn get_proxy_strategy(&self) -> crate::service::file::ProxyStrategy {
+        self.inner.proxy.strategy
+    }
+
     pub async fn from_config(
         mut config: ServiceMangerConfig,
         existing_ips: Option<HashMap<String, Ipv4Addr>>,
@@ -351,26 +355,28 @@ impl ServicesManager {
             .inner
             .instances
             .iter()
-            .cloned()
-            .map(|instance| async move {
-                let mut last_image_poll = std::time::Instant::now();
-                let mut init = true;
-                loop {
-                    let poll_images = last_image_poll.elapsed() >= delay;
-                    if poll_images {
-                        last_image_poll = std::time::Instant::now();
+            .map(|instance| {
+                let instance = instance.clone();
+                async move {
+                    let mut last_image_poll = std::time::Instant::now();
+                    let mut init = true;
+                    loop {
+                        let poll_images = last_image_poll.elapsed() >= delay;
+                        if poll_images {
+                            last_image_poll = std::time::Instant::now();
+                        }
+                        // Scope to release the lock
+                        let poll_start = std::time::Instant::now();
+                        instance.poll(poll_images, init).await;
+                        let poll_duration = poll_start.elapsed();
+                        log::debug!(
+                            "Polling for {} took {:?}",
+                            instance.config.service.name,
+                            poll_duration
+                        );
+                        init = false;
+                        tokio::time::sleep(Duration::from_secs(1)).await;
                     }
-                    // Scope to release the lock
-                    let poll_start = std::time::Instant::now();
-                    instance.poll(poll_images, init).await;
-                    let poll_duration = poll_start.elapsed();
-                    log::debug!(
-                        "Polling for {} took {:?}",
-                        instance.config.service.name,
-                        poll_duration
-                    );
-                    init = false;
-                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             })
             .collect::<JoinSet<_>>();

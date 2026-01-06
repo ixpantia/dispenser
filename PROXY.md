@@ -5,14 +5,37 @@ Dispenser includes a built-in, high-performance reverse proxy powered by [Pingor
 ## Overview
 
 The Dispenser proxy listens on ports 80 (HTTP) and 443 (HTTPS). It automatically:
-1.  Redirects all HTTP traffic to HTTPS.
+1.  Optionally redirects HTTP traffic to HTTPS (configurable).
 2.  Routes incoming requests to the correct container based on the `Host` header.
 3.  Manages SSL/TLS certificates via Let's Encrypt or self-signed "simulation" mode.
 4.  Handles Zero-Downtime reloads when configuration changes or certificates are updated.
 
-## Global Toggle
+## Global Configuration
 
-The reverse proxy is enabled by default. You can explicitly enable or disable it in your main `dispenser.toml` file. When disabled, both the proxy server (ports 80/443) and the automatic certificate maintenance tasks are turned off.
+The reverse proxy is enabled by default and defaults to enforcing HTTPS. You can configure the behavior in your main `dispenser.toml` file.
+
+### Proxy Strategy
+
+The `strategy` field determines how Dispenser handles HTTP (80) and HTTPS (443) traffic.
+
+```toml
+# dispenser.toml
+
+[proxy]
+enabled = true
+# Available options: "https-only", "http-only", "both"
+strategy = "https-only"
+```
+
+| Strategy | Behavior |
+| :--- | :--- |
+| `https-only` | (Default) Port 80 redirects all traffic to Port 443. SSL is required. |
+| `http-only` | Port 80 serves application traffic. Port 443 and SSL management are disabled. |
+| `both` | Both ports serve application traffic. No automatic redirects occur. |
+
+### Global Toggle
+
+When the `enabled` flag is set to `false`, both the proxy server and the automatic certificate maintenance tasks are turned off.
 
 ```toml
 # dispenser.toml

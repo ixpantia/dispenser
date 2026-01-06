@@ -28,6 +28,11 @@ pub async fn maintain_certificates(
     let _ = tokio::fs::create_dir_all(CHALLENGES_DIR).await;
     let settings = manager.get_certbot_settings();
 
+    if manager.get_proxy_strategy() == crate::service::file::ProxyStrategy::HttpOnly {
+        info!("Proxy strategy is HttpOnly, skipping certificate maintenance.");
+        return;
+    }
+
     loop {
         info!("Starting certificate maintenance check...");
         let mut changed = false;
@@ -45,13 +50,11 @@ pub async fn maintain_certificates(
                 if ensure_simulated_cert(host).await {
                     changed = true;
                 }
-            } else {
-                if let Some(settings) = &settings {
-                    match ensure_acme_cert(&settings, host).await {
-                        Ok(true) => changed = true,
-                        Ok(false) => {}
-                        Err(e) => error!("ACME error for {}: {}", host, e),
-                    }
+            } else if let Some(settings) = &settings {
+                match ensure_acme_cert(settings, host).await {
+                    Ok(true) => changed = true,
+                    Ok(false) => {}
+                    Err(e) => error!("ACME error for {}: {}", host, e),
                 }
             }
         }

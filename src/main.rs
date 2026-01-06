@@ -158,7 +158,9 @@ async fn main() -> ExitCode {
 
                     // Abort manager-bound tasks
                     polling_handle.abort();
-                    acme_handle.map(|t| t.abort());
+                    if let Some(t) = &acme_handle {
+                        t.abort();
+                    }
 
                     if let Err(e) = signals::reload_manager(manager_holder.clone(), service_filter).await {
                         log::error!("Reload failed: {e}");
@@ -171,7 +173,9 @@ async fn main() -> ExitCode {
 
                     // Abort manager-bound tasks
                     polling_handle.abort();
-                    acme_handle.map(|t| t.abort());
+                    if let Some(t) = &acme_handle {
+                        t.abort();
+                    }
 
                     let manager = manager_holder.lock().await;
                     manager.cancel().await;

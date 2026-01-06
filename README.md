@@ -341,6 +341,13 @@ In addition to the default network, you can declare custom networks in `dispense
         enabled = false
         ```
 
+    4.  (Optional) Configure the proxy strategy in `dispenser.toml`. Choose between `https-only` (default), `http-only`, or `both`.
+
+        ```toml
+        [proxy]
+        strategy = "http-only"
+        ```
+
     For more details, see the [Reverse Proxy Guide](PROXY.md).
 
     ### Step 10: Validating Configuration

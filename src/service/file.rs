@@ -21,15 +21,31 @@ pub struct EntrypointFile {
     pub certbot: Option<CertbotSettings>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ProxyStrategy {
+    #[serde(alias = "https-only", alias = "HttpsOnly")]
+    #[default]
+    HttpsOnly,
+    #[serde(alias = "http-only", alias = "HttpOnly")]
+    HttpOnly,
+    #[serde(alias = "both", alias = "Both")]
+    Both,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GlobalProxyConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub strategy: ProxyStrategy,
 }
 
 impl Default for GlobalProxyConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            strategy: ProxyStrategy::default(),
+        }
     }
 }
 

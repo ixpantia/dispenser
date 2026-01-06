@@ -559,8 +559,6 @@ impl ServiceInstance {
     }
 }
 
-/// Parse an image reference into (image, tag) components
-
 /// Parse memory limit string (e.g., "512m", "2g") to bytes
 fn parse_memory_limit(limit: &str) -> i64 {
     let limit = limit.trim().to_lowercase();
