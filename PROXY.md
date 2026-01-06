@@ -61,6 +61,8 @@ image = "my-registry/web-app:latest"
 [proxy]
 # The domain name the proxy should listen for
 host = "app.example.com"
+# Optional: The path prefix for this service (defaults to "/")
+path = "/api"
 # The port the service is listening on INSIDE the container
 service_port = 8080
 ```
@@ -70,6 +72,7 @@ service_port = 8080
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `host` | `string` | The FQDN (Fully Qualified Domain Name) for this service. |
+| `path` | `string` | (Optional) The URL path prefix. Defaults to `/`. |
 | `service_port` | `u16` | The private port inside the container where the app is running. |
 | `cert_file` | `string` | (Optional) Path to a custom SSL certificate file. |
 | `key_file` | `string` | (Optional) Path to a custom SSL private key file. |
@@ -119,8 +122,8 @@ dispenser dev -s my-app
 
 1.  **Request Arrival**: A request arrives at Dispenser on port 443.
 2.  **SNI Matching**: The proxy looks at the Server Name Indication (SNI) to select the correct SSL certificate.
-3.  **Host Matching**: Once the TLS handshake is complete, the proxy looks at the `Host` HTTP header.
-4.  **Upstream Resolution**: It finds the container matching that host and forwards the request to the container's internal IP address on the specified `service_port`.
+3.  **Host & Path Matching**: Once the TLS handshake is complete, the proxy looks at the `Host` HTTP header and the request path.
+4.  **Upstream Resolution**: It finds the container matching the host and the longest matching path prefix, then forwards the request to the container's internal IP address on the specified `service_port`.
 
 ### Internal Networking
 The proxy communicates with containers over the default `dispenser` network (`172.28.0.0/16`). You do not need to expose ports to the host machine (via `[[port]]`) for the proxy to work; it communicates directly with the container's private IP.

@@ -126,12 +126,17 @@ impl ProxyHttp for DispenserProxy {
                 .and_then(|h| h.to_str().ok())
         });
 
+        let path = session.req_header().uri.path();
+
         let upstream = host
-            .and_then(|host| self.services_manager.resolve_host(host))
+            .and_then(|host| self.services_manager.resolve_route(host, path))
             .ok_or_else(|| {
                 Error::explain(
                     HTTPStatus(502),
-                    format!("No upstream configured for host: {:?}", host),
+                    format!(
+                        "No upstream configured for host: {:?} with path: {}",
+                        host, path
+                    ),
                 )
             })?;
 

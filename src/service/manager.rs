@@ -63,11 +63,16 @@ impl ServiceMangerConfig {
     }
 }
 
+struct HostRoute {
+    path: String,
+    service_index: usize,
+}
+
 struct ServiceManagerInner {
     // These two are craeted together. We can zip them
     pub service_names: Vec<String>,
     instances: Vec<Arc<ServiceInstance>>,
-    router: HashMap<String, usize>,
+    router: HashMap<String, Vec<HostRoute>>,
     networks: Vec<NetworkInstance>,
     delay: Duration,
     certbot: Option<CertbotSettings>,
@@ -84,9 +89,24 @@ impl ServicesManager {
     pub fn proxy_enabled(&self) -> bool {
         self.inner.proxy.enabled
     }
-    pub fn resolve_host(&self, host: &str) -> Option<SocketAddrV4> {
-        if let Some(&service_index) = self.inner.router.get(host) {
-            return self.inner.instances[service_index].get_socket_addr();
+    pub fn resolve_route(&self, host: &str, path: &str) -> Option<SocketAddrV4> {
+        let path = if path.is_empty() { "/" } else { path };
+        if let Some(routes) = self.inner.router.get(host) {
+            for route in routes {
+                // Longest prefix match
+                let is_match = if route.path == "/" || path == route.path {
+                    true
+                } else if path.starts_with(&route.path) {
+                    // Ensure it matches a full path segment, e.g. /api matches /api/v1 but not /api-v2
+                    path.as_bytes().get(route.path.len()) == Some(&b'/')
+                } else {
+                    false
+                };
+
+                if is_match {
+                    return self.inner.instances[route.service_index].get_socket_addr();
+                }
+            }
         }
         None
     }
@@ -184,11 +204,20 @@ impl ServicesManager {
     }
 
     pub fn get_proxy_configs(&self) -> Vec<ProxySettings> {
-        self.inner
-            .instances
-            .iter()
-            .filter_map(|instance| instance.config.proxy.clone())
-            .collect()
+        let mut configs: HashMap<String, ProxySettings> = HashMap::new();
+        for instance in &self.inner.instances {
+            if let Some(proxy) = &instance.config.proxy {
+                let existing = configs.get(&proxy.host);
+                let is_better = match existing {
+                    None => true,
+                    Some(e) => e.cert_file.is_none() && proxy.cert_file.is_some(),
+                };
+                if is_better {
+                    configs.insert(proxy.host.clone(), proxy.clone());
+                }
+            }
+        }
+        configs.into_values().collect()
     }
 
     pub fn get_certbot_settings(&self) -> Option<CertbotSettings> {
@@ -310,7 +339,14 @@ impl ServicesManager {
             match result {
                 Ok((service_name, instance)) => {
                     if let Some(proxy_config) = &instance.config.proxy {
-                        router.insert(proxy_config.host.clone(), index);
+                        let host = proxy_config.host.clone();
+                        let path = normalize_path(proxy_config.path.as_deref());
+
+                        let routes = router.entry(host).or_insert_with(Vec::new);
+                        routes.push(HostRoute {
+                            path,
+                            service_index: index,
+                        });
                     }
                     service_names.push(service_name);
                     instances.push(instance);
@@ -320,6 +356,11 @@ impl ServicesManager {
                     log::error!("Failed to initialize service: {}", e);
                 }
             }
+        }
+
+        // Sort routes by path length descending to ensure longest prefix match
+        for routes in router.values_mut() {
+            routes.sort_by(|a, b| b.path.len().cmp(&a.path.len()));
         }
 
         // Create the broadcast channel for cancellation
@@ -444,6 +485,20 @@ impl ServicesManager {
 /// 2. New services get the lowest available IP addresses (Fill phase)
 ///
 /// The subnet is 172.28.0.0/16 with gateway at 172.28.0.1, so we start from 172.28.0.2.
+fn normalize_path(path: Option<&str>) -> String {
+    let mut path = path.unwrap_or("/").to_string();
+    if path.is_empty() {
+        return "/".to_string();
+    }
+    if !path.starts_with('/') {
+        path.insert(0, '/');
+    }
+    if path.len() > 1 && path.ends_with('/') {
+        path.pop();
+    }
+    path
+}
+
 fn allocate_ips(
     services: &[(PathBuf, crate::service::file::ServiceFile)],
     existing_ips: Option<HashMap<String, Ipv4Addr>>,
@@ -662,5 +717,142 @@ mod tests {
             assigned.get("service-a"),
             Some(&Ipv4Addr::new(172, 28, 0, 2))
         );
+    }
+
+    #[test]
+    fn test_resolve_route_path_matching() {
+        let mut router = HashMap::new();
+        router.insert(
+            "example.com".to_string(),
+            vec![
+                HostRoute {
+                    path: "/api/v1".to_string(),
+                    service_index: 1,
+                },
+                HostRoute {
+                    path: "/api".to_string(),
+                    service_index: 2,
+                },
+                HostRoute {
+                    path: "/".to_string(),
+                    service_index: 0,
+                },
+            ],
+        );
+
+        // Mock instances with dummy socket addresses
+        let mut instances = Vec::new();
+        for i in 0..3 {
+            let config = ServiceInstanceConfig {
+                dir: PathBuf::from(format!("/service-{}", i)),
+                service: ServiceEntry {
+                    name: format!("service-{}", i),
+                    image: "test:latest".to_string(),
+                    hostname: None,
+                    user: None,
+                    working_dir: None,
+                    command: None,
+                    entrypoint: None,
+                    memory: None,
+                    cpus: None,
+                },
+                ports: vec![],
+                volume: vec![],
+                env: HashMap::new(),
+                restart: Restart::No,
+                network: vec![],
+                dispenser: DispenserConfig {
+                    watch: false,
+                    cron: None,
+                    pull: PullOptions::OnStartup,
+                    initialize: crate::service::file::Initialize::default(),
+                },
+                depends_on: HashMap::new(),
+                proxy: Some(ProxySettings {
+                    host: "example.com".to_string(),
+                    path: None,
+                    service_port: 8080,
+                    cert_file: None,
+                    key_file: None,
+                }),
+                assigned_ip: Ipv4Addr::new(172, 28, 0, i as u8 + 10),
+            };
+            instances.push(Arc::new(ServiceInstance {
+                config: Arc::new(config),
+                cron_watcher: None,
+                image_watcher: None,
+            }));
+        }
+
+        let manager = ServicesManager {
+            inner: ServiceManagerInner {
+                service_names: vec![],
+                instances,
+                networks: vec![],
+                delay: Duration::from_secs(60),
+                router,
+                proxy: GlobalProxyConfig::default(),
+                certbot: None,
+            },
+            cancel_tx: tokio::sync::mpsc::channel(1).0,
+            cancel_rx: Mutex::new(tokio::sync::mpsc::channel(1).1),
+        };
+
+        // 1. Test exact match
+        assert_eq!(
+            manager.resolve_route("example.com", "/api").unwrap().ip(),
+            &Ipv4Addr::new(172, 28, 0, 12)
+        );
+
+        // 2. Test longest prefix match
+        assert_eq!(
+            manager
+                .resolve_route("example.com", "/api/v1/users")
+                .unwrap()
+                .ip(),
+            &Ipv4Addr::new(172, 28, 0, 11)
+        );
+
+        // 3. Test fallback to root
+        assert_eq!(
+            manager
+                .resolve_route("example.com", "/dashboard")
+                .unwrap()
+                .ip(),
+            &Ipv4Addr::new(172, 28, 0, 10)
+        );
+
+        // 4. Test safety (preventing partial segment match)
+        // "/api-v2" should NOT match "/api", it should fall back to "/"
+        assert_eq!(
+            manager
+                .resolve_route("example.com", "/api-v2")
+                .unwrap()
+                .ip(),
+            &Ipv4Addr::new(172, 28, 0, 10)
+        );
+
+        // 5. Test trailing slash behavior
+        assert_eq!(
+            manager.resolve_route("example.com", "/api/").unwrap().ip(),
+            &Ipv4Addr::new(172, 28, 0, 12)
+        );
+
+        // 6. Test empty path defaults to /
+        assert_eq!(
+            manager.resolve_route("example.com", "").unwrap().ip(),
+            &Ipv4Addr::new(172, 28, 0, 10)
+        );
+    }
+
+    #[test]
+    fn test_normalize_path() {
+        assert_eq!(normalize_path(None), "/");
+        assert_eq!(normalize_path(Some("")), "/");
+        assert_eq!(normalize_path(Some("/")), "/");
+        assert_eq!(normalize_path(Some("/api")), "/api");
+        assert_eq!(normalize_path(Some("/api/")), "/api");
+        assert_eq!(normalize_path(Some("api")), "/api");
+        assert_eq!(normalize_path(Some("api/")), "/api");
     }
 }

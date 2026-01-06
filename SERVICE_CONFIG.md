@@ -397,6 +397,21 @@ The domain name (FQDN) that this service should respond to.
 host = "app.example.com"
 ```
 
+### `path` (optional)
+
+The URL path prefix that this service should respond to. If multiple services share the same `host`, Dispenser will route traffic based on the longest matching path prefix.
+
+**Default:** `/`
+
+```toml
+[proxy]
+host = "app.example.com"
+path = "/api"
+service_port = 8080
+```
+
+Paths are matched as prefixes. For example, a path of `/api` will match `/api`, `/api/`, and `/api/v1`, but it will *not* match `/api-v2`.
+
 ### `service_port` (required)
 
 The port the application is listening on inside the container. This is where the proxy will forward traffic.

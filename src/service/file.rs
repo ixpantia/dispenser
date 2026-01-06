@@ -108,6 +108,7 @@ pub struct ProxySettings {
     ///
     /// TODO: Document this
     pub host: String,
+    pub path: Option<String>,
     /// The port of the service running inside the container.
     /// The dispenser reverse proxy will send HTTP/WebSocket traffic
     /// to this port.
