@@ -375,7 +375,7 @@ The `[depends_on]` section defines dependencies between services.
 
 ```toml
 [depends_on]
-postgres = "service-started"
+postgres = "service-healthy"
 redis = "service-started"
 migration = "service-completed"
 ```
@@ -383,6 +383,7 @@ migration = "service-completed"
 **Valid conditions:**
 - `service-started` or `started` - Wait for service to start
 - `service-completed` or `completed` - Wait for service to complete
+- `service-healthy` or `healthy` - Wait for service to reach a healthy state. If the service has no health check defined, it is considered healthy as soon as it is started.
 
 ## Proxy Configuration
 

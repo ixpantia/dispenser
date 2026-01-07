@@ -2,8 +2,8 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use bollard::models::{
-    ContainerCreateBody, EndpointIpamConfig, EndpointSettings, HostConfig, NetworkConnectRequest,
-    NetworkingConfig, PortBinding, RestartPolicy, RestartPolicyNameEnum,
+    ContainerCreateBody, EndpointIpamConfig, EndpointSettings, HealthStatusEnum, HostConfig,
+    NetworkConnectRequest, NetworkingConfig, PortBinding, RestartPolicy, RestartPolicyNameEnum,
 };
 use bollard::query_parameters::{
     CreateContainerOptions, CreateContainerOptionsBuilder, CreateImageOptions,
@@ -51,8 +51,16 @@ pub struct ServiceInstance {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthStatus {
+    Starting,
+    Healthy,
+    Unhealthy,
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerStatus {
-    Running,
+    Running { health: HealthStatus },
     Exited(i32),
     NotFound,
 }
@@ -71,7 +79,13 @@ async fn get_container_status(container_name: &str) -> Result<ContainerStatus, S
         Ok(info) => {
             if let Some(state) = info.state {
                 if state.running.unwrap_or(false) {
-                    return Ok(ContainerStatus::Running);
+                    let health = match state.health.and_then(|h| h.status) {
+                        Some(HealthStatusEnum::HEALTHY) => HealthStatus::Healthy,
+                        Some(HealthStatusEnum::UNHEALTHY) => HealthStatus::Unhealthy,
+                        Some(HealthStatusEnum::STARTING) => HealthStatus::Starting,
+                        _ => HealthStatus::None,
+                    };
+                    return Ok(ContainerStatus::Running { health });
                 }
                 let exit_code = state.exit_code.unwrap_or(-1) as i32;
                 return Ok(ContainerStatus::Exited(exit_code));
@@ -92,12 +106,18 @@ impl ServiceInstance {
             for (container, condition) in &self.config.depends_on {
                 let status = match get_container_status(container).await {
                     Ok(status) => match condition {
-                        DependsOnCondition::ServiceStarted => {
-                            matches!(status, ContainerStatus::Running)
+                        DependsOnCondition::Started => {
+                            matches!(status, ContainerStatus::Running { .. })
                         }
-                        DependsOnCondition::ServiceCompleted => {
+                        DependsOnCondition::Completed => {
                             matches!(status, ContainerStatus::Exited(0))
                         }
+                        DependsOnCondition::Healthy => match status {
+                            ContainerStatus::Running { health } => {
+                                matches!(health, HealthStatus::Healthy | HealthStatus::None)
+                            }
+                            _ => false,
+                        },
                     },
                     Err(_) => false,
                 };

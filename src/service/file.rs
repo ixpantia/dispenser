@@ -189,13 +189,19 @@ pub enum DependsOnCondition {
         alias = "service_started",
         alias = "started"
     )]
-    ServiceStarted,
+    Started,
     #[serde(
         alias = "service-completed",
         alias = "service_completed",
         alias = "completed"
     )]
-    ServiceCompleted,
+    Completed,
+    #[serde(
+        alias = "service-healthy",
+        alias = "service_healthy",
+        alias = "healthy"
+    )]
+    Healthy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
