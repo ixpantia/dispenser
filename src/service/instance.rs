@@ -33,7 +33,6 @@ pub struct ServiceInstanceConfig {
     pub ports: Vec<PortEntry>,
     pub volume: Vec<VolumeEntry>,
     pub env: HashMap<String, String>,
-    pub restart: Restart,
     pub network: Vec<Network>,
     pub dispenser: DispenserConfig,
     pub depends_on: HashMap<String, DependsOnCondition>,
@@ -335,7 +334,7 @@ impl ServiceInstance {
             .collect();
 
         // Build restart policy
-        let restart_policy = match self.config.restart {
+        let restart_policy = match self.config.service.restart {
             Restart::Always => Some(RestartPolicy {
                 name: Some(RestartPolicyNameEnum::ALWAYS),
                 maximum_retry_count: None,

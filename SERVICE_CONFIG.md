@@ -13,6 +13,7 @@ A `service.toml` file has the following main sections:
 ```toml
 [service]
 # Core service configuration
+restart = "policy"
 
 [[port]]
 # Port mapping (can have multiple)
@@ -25,8 +26,6 @@ A `service.toml` file has the following main sections:
 
 [[network]]
 # Network connection (can have multiple)
-
-restart = "policy"
 
 [dispenser]
 # Dispenser-specific settings
@@ -272,6 +271,7 @@ The name of the network to connect to. Must match a network declared in `dispens
 Define when Docker should restart the container.
 
 ```toml
+[service]
 restart = "always"
 ```
 
@@ -286,6 +286,7 @@ restart = "always"
 **Examples:**
 
 ```toml
+[service]
 # Never restart
 restart = "no"
 
@@ -449,6 +450,7 @@ See [PROXY.md](PROXY.md) for more details on the reverse proxy.
 [service]
 name = "nginx"
 image = "nginx:latest"
+restart = "unless-stopped"
 
 [[port]]
 host = 80
@@ -471,8 +473,6 @@ readonly = true
 [[network]]
 name = "web"
 
-restart = "unless-stopped"
-
 [dispenser]
 watch = true
 initialize = "immediately"
@@ -486,6 +486,7 @@ name = "api"
 image = "ghcr.io/my-org/api:latest"
 memory = "1g"
 cpus = "1.0"
+restart = "always"
 
 [[port]]
 host = 3000
@@ -503,8 +504,6 @@ name = "frontend"
 [[network]]
 name = "backend"
 
-restart = "always"
-
 [dispenser]
 watch = true
 initialize = "immediately"
@@ -520,6 +519,7 @@ redis = "service-started"
 [service]
 name = "worker"
 image = "python:3.11"
+restart = "always"
 command = ["python", "worker.py"]
 working_dir = "/app"
 user = "1000:1000"
@@ -542,8 +542,6 @@ QUEUE_URL = "redis://redis:6379"
 [[network]]
 name = "backend"
 
-restart = "always"
-
 [dispenser]
 watch = true
 initialize = "immediately"
@@ -559,6 +557,7 @@ redis = "service-started"
 [service]
 name = "backup-job"
 image = "my-backup:latest"
+restart = "no"
 command = ["/backup.sh"]
 working_dir = "/backups"
 
@@ -575,8 +574,6 @@ readonly = true
 BACKUP_RETENTION_DAYS = "30"
 BACKUP_DESTINATION = "s3://my-bucket/backups"
 
-restart = "no"
-
 [dispenser]
 watch = false
 initialize = "on-trigger"
@@ -589,6 +586,7 @@ cron = "0 2 * * *"  # Every day at 2 AM
 [service]
 name = "postgres"
 image = "postgres:15"
+restart = "unless-stopped"
 hostname = "postgres-db"
 memory = "2g"
 
@@ -605,8 +603,6 @@ target = "/var/lib/postgresql/data"
 [[network]]
 name = "database"
 
-restart = "unless-stopped"
-
 [dispenser]
 watch = false
 initialize = "immediately"
@@ -618,6 +614,7 @@ initialize = "immediately"
 [service]
 name = "init-service"
 image = "alpine:latest"
+restart = "no"
 entrypoint = ["/bin/sh", "-c"]
 command = ["apk add --no-cache curl && curl https://example.com/setup.sh | sh"]
 working_dir = "/workspace"
@@ -625,8 +622,6 @@ working_dir = "/workspace"
 [[volume]]
 source = "./workspace"
 target = "/workspace"
-
-restart = "no"
 
 [dispenser]
 watch = false

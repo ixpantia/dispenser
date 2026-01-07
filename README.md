@@ -105,6 +105,9 @@ Dispenser deploys applications based on a `service.toml` file.
     [service]
     name = "my-app"
     image = "ghcr.io/my-org/my-app:latest"
+
+    # Restart policy (optional, defaults to "no")
+    restart = "always"
     
     # Port mappings (optional)
     [[port]]
@@ -115,9 +118,6 @@ Dispenser deploys applications based on a `service.toml` file.
     [env]
     DATABASE_URL = "postgres://user:password@host:port/db"
     API_KEY = "your_secret_api_key"
-    
-    # Restart policy (optional, defaults to "no")
-    restart = "always"
     
     # Dispenser-specific configuration (required)
     [dispenser]

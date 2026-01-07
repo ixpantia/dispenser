@@ -8,6 +8,7 @@ use std::{
 use super::vars::{render_template, ServiceConfigError, ServiceVarsMaterialized};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct EntrypointFile {
     #[serde(rename = "service", default)]
     pub services: Vec<EntrypointFileEntry>,
@@ -33,6 +34,7 @@ pub enum ProxyStrategy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct GlobalProxyConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -53,6 +55,7 @@ impl Default for GlobalProxyConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CertbotSettings {
     pub email: String,
 }
@@ -75,6 +78,7 @@ impl EntrypointFile {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkDeclarationEntry {
     pub name: String,
     #[serde(default = "default_network_driver")]
@@ -102,6 +106,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProxySettings {
     /// Example: example.com, something.dispenser.org
     ///
@@ -138,6 +143,7 @@ pub enum NetworkDriver {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct EntrypointFileEntry {
     /// Path to the directory where a service.toml file is found.
     /// This toml file should be deserialized into a ServiceFile.
@@ -146,6 +152,7 @@ pub struct EntrypointFileEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ServiceFile {
     pub service: ServiceEntry,
     #[serde(default, rename = "port")]
@@ -154,8 +161,6 @@ pub struct ServiceFile {
     pub volume: Vec<VolumeEntry>,
     #[serde(default)]
     pub env: HashMap<String, String>,
-    #[serde(default)]
-    pub restart: Restart,
     #[serde(default)]
     pub network: Vec<Network>,
     pub dispenser: DispenserConfig,
@@ -214,6 +219,7 @@ pub enum PullOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct DispenserConfig {
     pub watch: bool,
     #[serde(default)]
@@ -224,6 +230,7 @@ pub struct DispenserConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Network {
     pub name: String,
 }
@@ -246,6 +253,7 @@ pub enum Restart {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PortEntry {
     pub host: u16,
     pub container: u16,
@@ -272,6 +280,7 @@ impl<'de> Deserialize<'de> for VolumeSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct VolumeEntry {
     pub source: VolumeSource,
     pub target: String,
@@ -306,6 +315,7 @@ impl VolumeEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ServiceEntry {
     pub name: String,
     pub image: String,
@@ -323,4 +333,6 @@ pub struct ServiceEntry {
     pub memory: Option<String>,
     /// Number of CPUs (e.g., "1.5", "2")
     pub cpus: Option<String>,
+    #[serde(default)]
+    pub restart: Restart,
 }

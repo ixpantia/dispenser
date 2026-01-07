@@ -323,6 +323,7 @@ initialize = "immediately"
 [service]
 name = "worker"
 image = "my-worker:latest"
+restart = "always"
 
 # Connected to backend and database
 [[network]]
@@ -333,8 +334,6 @@ name = "database"
 
 [env]
 DATABASE_URL = "postgres://postgres:5432/mydb"
-
-restart = "always"
 
 [dispenser]
 watch = true
@@ -347,6 +346,7 @@ initialize = "immediately"
 [service]
 name = "postgres"
 image = "postgres:15"
+restart = "unless-stopped"
 
 # Only connected to database network (most isolated)
 [[network]]
@@ -359,8 +359,6 @@ POSTGRES_DB = "mydb"
 [[volume]]
 source = "./data"
 target = "/var/lib/postgresql/data"
-
-restart = "unless-stopped"
 
 [dispenser]
 watch = false

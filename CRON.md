@@ -45,12 +45,11 @@ Use [crontab.guru](https://crontab.guru/) for help (add `0` for seconds field).
 [service]
 name = "backup-job"
 image = "my-backup:latest"
+restart = "no"
 
 [[volume]]
 source = "./backups"
 target = "/backups"
-
-restart = "no"
 
 [dispenser]
 watch = false
@@ -64,9 +63,8 @@ cron = "0 0 2 * * *"  # Daily at 2 AM
 [service]
 name = "etl-processor"
 image = "my-etl:latest"
-command = ["python", "process.py"]
-
 restart = "no"
+command = ["python", "process.py"]
 
 [dispenser]
 watch = false
@@ -80,7 +78,6 @@ cron = "0 0 * * * *"  # Every hour
 [service]
 name = "worker"
 image = "my-worker:latest"
-
 restart = "always"
 
 [dispenser]
@@ -107,4 +104,4 @@ This configuration will:
 
 ### `restart`
 
-Use `restart = "no"` for one-time jobs to prevent automatic restarts between scheduled runs.
+Use `restart = "no"` (inside the `[service]` block) for one-time jobs to prevent automatic restarts between scheduled runs.

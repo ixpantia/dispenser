@@ -320,7 +320,6 @@ impl ServicesManager {
                     ports: service_file.ports,
                     volume: service_file.volume,
                     env: service_file.env,
-                    restart: service_file.restart,
                     network: service_file.network,
                     dispenser: service_file.dispenser,
                     depends_on: service_file.depends_on,
@@ -585,11 +584,11 @@ mod tests {
                 entrypoint: None,
                 memory: None,
                 cpus: None,
+                restart: Restart::No,
             },
             ports: vec![],
             volume: vec![],
             env: HashMap::new(),
-            restart: Restart::No,
             network: vec![],
             dispenser: DispenserConfig {
                 watch: false,
@@ -759,11 +758,11 @@ mod tests {
                     entrypoint: None,
                     memory: None,
                     cpus: None,
+                    restart: Restart::No,
                 },
                 ports: vec![],
                 volume: vec![],
                 env: HashMap::new(),
-                restart: Restart::No,
                 network: vec![],
                 dispenser: DispenserConfig {
                     watch: false,
@@ -858,5 +857,91 @@ mod tests {
         assert_eq!(normalize_path(Some("/api/")), "/api");
         assert_eq!(normalize_path(Some("api")), "/api");
         assert_eq!(normalize_path(Some("api/")), "/api");
+    }
+
+    #[test]
+    fn test_strict_parsing_service_file() {
+        // Valid config with restart inside [service]
+        let toml_content = r#"
+            [service]
+            name = "test"
+            image = "test"
+            restart = "always"
+
+            [dispenser]
+            watch = false
+        "#;
+        let res: Result<ServiceFile, _> = toml::from_str(toml_content);
+        assert!(res.is_ok());
+
+        // Invalid config (restart outside [service] block at the root level)
+        let toml_content_invalid = r#"
+            restart = "always"
+
+            [service]
+            name = "test"
+            image = "test"
+
+            [dispenser]
+            watch = false
+        "#;
+        let res: Result<ServiceFile, _> = toml::from_str(toml_content_invalid);
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err().to_string();
+        assert!(err_msg.contains("unknown field `restart`"));
+    }
+
+    #[test]
+    fn test_strict_parsing_service_entry() {
+        // Invalid field in [service]
+        let toml_content = r#"
+            [service]
+            name = "test"
+            image = "test"
+            unknown_field = "value"
+
+            [dispenser]
+            watch = false
+        "#;
+        let res: Result<ServiceFile, _> = toml::from_str(toml_content);
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err().to_string();
+        assert!(err_msg.contains("unknown field `unknown_field`"));
+    }
+
+    #[test]
+    fn test_strict_parsing_dispenser_config() {
+        // Invalid field in [dispenser]
+        let toml_content = r#"
+            [service]
+            name = "test"
+            image = "test"
+
+            [dispenser]
+            watch = false
+            invalid_option = true
+        "#;
+        let res: Result<ServiceFile, _> = toml::from_str(toml_content);
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err().to_string();
+        assert!(err_msg.contains("unknown field `invalid_option`"));
+    }
+
+    #[test]
+    fn test_strict_parsing_newline_in_table() {
+        // Valid config with newline between fields in [service]
+        let toml_content = r#"
+            [service]
+            name = "test"
+            image = "test"
+
+            restart = "always"
+
+            [dispenser]
+            watch = false
+        "#;
+        let res: Result<ServiceFile, _> = toml::from_str(toml_content);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap().service.restart, Restart::Always);
     }
 }
