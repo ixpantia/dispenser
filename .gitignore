@@ -6,3 +6,4 @@ rpm/usr/local/bin/dispenser
 *.deb
 *.rpm
 **/**/.DS_Store
+/data

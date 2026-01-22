@@ -7,10 +7,10 @@ license = "MIT"
 [dependencies]
 rustls = { version = "0.23", features = ["ring"] }
 
-arrow = "53.0.0"
+arrow = "52.2.0"
 base64 = "0.22.1"
 bollard = "0.19.4"
-chrono = "0.4.42"
+chrono = "=0.4.39"
 clap = { version = "4.5.18", features = ["derive"] }
 cron = { version = "0.15.0", features = ["serde"] }
 deltalake = { version = "0.20.1", features = ["datafusion", "s3", "gcs"] }

@@ -1,6 +1,6 @@
 use super::events::{ContainerStatusEvent, DeploymentEvent};
 use arrow::array::{
-    ArrayBuilder, BooleanBuilder, Date32Builder, Int32Builder, Int64Builder, StringBuilder,
+    BooleanBuilder, Date32Builder, Int32Builder, Int64Builder, StringBuilder,
     TimestampMicrosecondBuilder,
 };
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -142,13 +142,13 @@ impl DeploymentsBuffer {
             Arc::new(schema),
             vec![
                 Arc::new(self.date.finish()),
-                Arc::new(self.timestamp.finish()),
+                Arc::new(self.timestamp.finish().with_timezone("UTC")),
                 Arc::new(self.service.finish()),
                 Arc::new(self.image.finish()),
                 Arc::new(self.image_sha.finish()),
                 Arc::new(self.image_size_mb.finish()),
                 Arc::new(self.container_id.finish()),
-                Arc::new(self.container_created_at.finish()),
+                Arc::new(self.container_created_at.finish().with_timezone("UTC")),
                 Arc::new(self.trigger_type.finish()),
                 Arc::new(self.dispenser_version.finish()),
                 Arc::new(self.restart_policy.finish()),
@@ -258,7 +258,7 @@ impl StatusBuffer {
             Arc::new(schema),
             vec![
                 Arc::new(self.date.finish()),
-                Arc::new(self.timestamp.finish()),
+                Arc::new(self.timestamp.finish().with_timezone("UTC")),
                 Arc::new(self.service.finish()),
                 Arc::new(self.container_id.finish()),
                 Arc::new(self.state.finish()),

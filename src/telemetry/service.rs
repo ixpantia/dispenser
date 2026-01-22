@@ -1,6 +1,7 @@
 use super::buffer::{DeploymentsBuffer, StatusBuffer};
 use super::events::DispenserEvent;
 use crate::service::file::TelemetryConfig;
+use deltalake::kernel::StructField;
 use deltalake::{DeltaOps, DeltaTableError};
 use log::{error, info, warn};
 use std::time::{Duration, Instant};
@@ -137,7 +138,23 @@ impl TelemetryService {
         table_uri: &str,
         batch: arrow::record_batch::RecordBatch,
     ) -> Result<(), DeltaTableError> {
-        let table = deltalake::open_table(table_uri).await?;
+        let table = match deltalake::open_table(table_uri).await {
+            Ok(table) => table,
+            Err(DeltaTableError::NotATable(_)) => {
+                let ops = DeltaOps::try_from_uri(table_uri).await?;
+                ops.create()
+                    .with_columns(
+                        batch
+                            .schema()
+                            .fields()
+                            .iter()
+                            .map(|f| StructField::try_from(f.as_ref()).unwrap()),
+                    )
+                    .await?
+            }
+            Err(e) => return Err(e),
+        };
+
         let ops = DeltaOps(table);
         ops.write(vec![batch])
             .with_save_mode(deltalake::protocol::SaveMode::Append)

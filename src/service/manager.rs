@@ -77,7 +77,6 @@ struct ServiceManagerInner {
     delay: Duration,
     certbot: Option<CertbotSettings>,
     proxy: GlobalProxyConfig,
-    telemetry: Option<crate::telemetry::TelemetryClient>,
     telemetry_status_interval: Duration,
 }
 
@@ -390,7 +389,6 @@ impl ServicesManager {
             router,
             proxy,
             certbot: config.entrypoint_file.certbot,
-            telemetry,
             telemetry_status_interval,
         };
 

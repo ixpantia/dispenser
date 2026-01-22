@@ -4,7 +4,7 @@ use log::error;
 use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TelemetryClient {
     tx: Sender<DispenserEvent>,
 }
