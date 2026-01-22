@@ -13,7 +13,7 @@ bollard = "0.19.4"
 chrono = "=0.4.39"
 clap = { version = "4.5.18", features = ["derive"] }
 cron = { version = "0.15.0", features = ["serde"] }
-deltalake = { version = "0.20.1", features = ["datafusion", "s3", "gcs"] }
+deltalake = { version = "0.20.1", features = ["datafusion", "s3", "gcs", "azure"] }
 env_logger = "0.11.5"
 futures = "0.3.31"
 futures-util = "0.3.31"
