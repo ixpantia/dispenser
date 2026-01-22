@@ -804,6 +804,7 @@ mod tests {
                 config: Arc::new(config),
                 cron_watcher: None,
                 image_watcher: None,
+                telemetry: None,
             }));
         }
 
@@ -816,6 +817,7 @@ mod tests {
                 router,
                 proxy: GlobalProxyConfig::default(),
                 certbot: None,
+                telemetry_status_interval: Duration::from_secs(60),
             },
             cancel_tx: tokio::sync::mpsc::channel(1).0,
             cancel_rx: Mutex::new(tokio::sync::mpsc::channel(1).1),

@@ -272,3 +272,61 @@ impl StatusBuffer {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::telemetry::events::DeploymentEvent;
+    use arrow::datatypes::{DataType, TimeUnit};
+    use uuid::Uuid;
+
+    #[test]
+    fn test_deployments_buffer_schema_compliance() {
+        let mut buffer = DeploymentsBuffer::new(10);
+
+        let event = DeploymentEvent {
+            event_id: Uuid::now_v7(),
+            timestamp: 1700000000000000, // UTC mic
+            service: "test-svc".to_string(),
+            image: "nginx".to_string(),
+            image_sha: "sha256:1234".to_string(),
+            image_size_mb: 100,
+            container_id: "cid-1".to_string(),
+            container_created_at: 1700000000000000,
+            trigger_type: "manual".to_string(),
+            dispenser_version: "1.0".to_string(),
+            restart_policy: "always".to_string(),
+            memory_limit: Some("512m".to_string()),
+            cpu_limit: None,
+            proxy_enabled: true,
+            proxy_host: Some("test.com".to_string()),
+            port_mappings_count: 2,
+            volume_count: 1,
+            network_count: 1,
+        };
+
+        buffer.push(&event);
+        assert!(!buffer.is_empty());
+        assert_eq!(buffer.len(), 1);
+
+        let batch = buffer
+            .into_record_batch()
+            .expect("Failed to create record batch");
+
+        // Verify Schema correctness
+        let schema = batch.schema();
+
+        // Check Timestamp is UTC (Crucial fix verification)
+        let ts_field = schema.field_with_name("timestamp").unwrap();
+        match ts_field.data_type() {
+            DataType::Timestamp(TimeUnit::Microsecond, Some(tz)) => {
+                assert_eq!(tz.as_ref(), "UTC", "Timestamp timezone mismatch");
+            }
+            dt => panic!("Expected Timestamp(Microsecond, UTC), found {:?}", dt),
+        }
+
+        // Check Nullable fields
+        let cpu_field = schema.field_with_name("cpu_limit").unwrap();
+        assert!(cpu_field.is_nullable());
+    }
+}
