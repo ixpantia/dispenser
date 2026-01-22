@@ -18,8 +18,8 @@ use crate::service::{
 };
 
 pub struct ServiceMangerConfig {
-    entrypoint_file: EntrypointFile,
-    services: Vec<(PathBuf, ServiceFile)>,
+    pub entrypoint_file: EntrypointFile,
+    pub services: Vec<(PathBuf, ServiceFile)>,
 }
 
 impl ServiceMangerConfig {
@@ -77,6 +77,8 @@ struct ServiceManagerInner {
     delay: Duration,
     certbot: Option<CertbotSettings>,
     proxy: GlobalProxyConfig,
+    telemetry: Option<crate::telemetry::TelemetryClient>,
+    telemetry_status_interval: Duration,
 }
 
 pub struct ServicesManager {
@@ -235,9 +237,17 @@ impl ServicesManager {
     pub async fn from_config(
         mut config: ServiceMangerConfig,
         existing_ips: Option<HashMap<String, Ipv4Addr>>,
+        telemetry: Option<crate::telemetry::TelemetryClient>,
     ) -> Result<Self, ServiceConfigError> {
         // Get the delay from config (in seconds)
         let delay = Duration::from_secs(config.entrypoint_file.delay);
+        let telemetry_status_interval = config
+            .entrypoint_file
+            .telemetry
+            .as_ref()
+            .map(|t| Duration::from_secs(t.status_interval))
+            .unwrap_or(Duration::from_secs(60));
+
         let mut instances = Vec::new();
         let mut networks = Vec::new();
         let mut service_names = Vec::new();
@@ -298,6 +308,7 @@ impl ServicesManager {
                 .get(&service_file.service.name)
                 .copied()
                 .expect("IP should have been allocated for all services");
+            let telemetry = telemetry.clone();
             join_set.spawn(async move {
                 log::debug!("Initializing config for {entry_path:?}");
 
@@ -331,6 +342,7 @@ impl ServicesManager {
                     config: Arc::new(config),
                     cron_watcher,
                     image_watcher,
+                    telemetry,
                 };
 
                 (service_name, Arc::new(instance))
@@ -378,6 +390,8 @@ impl ServicesManager {
             router,
             proxy,
             certbot: config.entrypoint_file.certbot,
+            telemetry,
+            telemetry_status_interval,
         };
 
         Ok(ServicesManager {
@@ -394,6 +408,7 @@ impl ServicesManager {
     pub async fn start_polling(&self) {
         log::info!("Starting polling task");
         let delay = self.inner.delay;
+        let status_delay = self.inner.telemetry_status_interval;
 
         let polls = self
             .inner
@@ -403,15 +418,22 @@ impl ServicesManager {
                 let instance = instance.clone();
                 async move {
                     let mut last_image_poll = std::time::Instant::now();
+                    let mut last_status_poll = std::time::Instant::now();
                     let mut init = true;
                     loop {
                         let poll_images = last_image_poll.elapsed() >= delay;
                         if poll_images {
                             last_image_poll = std::time::Instant::now();
                         }
+
+                        let poll_status = last_status_poll.elapsed() >= status_delay;
+                        if poll_status {
+                            last_status_poll = std::time::Instant::now();
+                        }
+
                         // Scope to release the lock
                         let poll_start = std::time::Instant::now();
-                        instance.poll(poll_images, init).await;
+                        instance.poll(poll_images, poll_status, init).await;
                         let poll_duration = poll_start.elapsed();
                         log::debug!(
                             "Polling for {} took {:?}",

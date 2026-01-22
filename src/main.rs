@@ -15,6 +15,7 @@ mod proxy;
 mod secrets;
 mod service;
 mod signals;
+mod telemetry;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -79,13 +80,43 @@ async fn main() -> ExitCode {
         }
     };
 
-    let manager = match ServicesManager::from_config(service_manager_config, None).await {
-        Ok(m) => Arc::new(m),
-        Err(e) => {
-            log::error!("Failed to create services manager: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let telemetry_client =
+        if let Some(telemetry_config) = &service_manager_config.entrypoint_file.telemetry {
+            if telemetry_config.enabled {
+                let (tx, rx) = tokio::sync::mpsc::channel(10000);
+                let config = telemetry_config.clone();
+
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(2)
+                        .enable_all()
+                        .build()
+                        .expect("Failed to build telemetry runtime");
+
+                    rt.block_on(async {
+                        let service = crate::telemetry::TelemetryService::new(config, rx);
+                        service.run().await;
+                    });
+                });
+
+                Some(crate::telemetry::TelemetryClient::new(tx))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+    let manager =
+        match ServicesManager::from_config(service_manager_config, None, telemetry_client.clone())
+            .await
+        {
+            Ok(m) => Arc::new(m),
+            Err(e) => {
+                log::error!("Failed to create services manager: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
 
     if let Err(e) = manager.validate_containers_not_present().await {
         log::error!("{e}");
@@ -162,7 +193,10 @@ async fn main() -> ExitCode {
                         t.abort();
                     }
 
-                    if let Err(e) = signals::reload_manager(manager_holder.clone(), service_filter).await {
+                    if let Err(e) =
+                        signals::reload_manager(manager_holder.clone(), service_filter, telemetry_client.clone())
+                            .await
+                    {
                         log::error!("Reload failed: {e}");
                     }
 

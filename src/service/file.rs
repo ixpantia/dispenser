@@ -20,6 +20,7 @@ pub struct EntrypointFile {
     #[serde(default = "default_delay")]
     pub delay: u64,
     pub certbot: Option<CertbotSettings>,
+    pub telemetry: Option<TelemetryConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -58,6 +59,20 @@ impl Default for GlobalProxyConfig {
 #[serde(deny_unknown_fields)]
 pub struct CertbotSettings {
     pub email: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TelemetryConfig {
+    pub enabled: bool,
+    pub table_uri_deployments: String,
+    pub table_uri_status: String,
+    pub buffer_size: Option<usize>,
+    #[serde(default = "default_status_interval")]
+    pub status_interval: u64,
+}
+
+fn default_status_interval() -> u64 {
+    60
 }
 
 fn default_delay() -> u64 {

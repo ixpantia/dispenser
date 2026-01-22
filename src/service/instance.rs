@@ -47,6 +47,7 @@ pub struct ServiceInstance {
     pub config: Arc<ServiceInstanceConfig>,
     pub cron_watcher: Option<CronWatcher>,
     pub image_watcher: Option<ImageWatcher>,
+    pub telemetry: Option<crate::telemetry::TelemetryClient>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +100,7 @@ async fn get_container_status(container_name: &str) -> Result<ContainerStatus, S
 }
 
 impl ServiceInstance {
-    pub async fn run_container(&self) -> Result<(), ServiceConfigError> {
+    pub async fn run_container(&self, trigger_type: &str) -> Result<(), ServiceConfigError> {
         let mut depends_on_conditions = Vec::with_capacity(self.config.depends_on.len());
         loop {
             for (container, condition) in &self.config.depends_on {
@@ -140,7 +141,7 @@ impl ServiceInstance {
         if self.config.dispenser.pull == PullOptions::Always
             || self.container_does_not_exist().await
         {
-            self.recreate_container().await?;
+            self.recreate_container(trigger_type).await?;
         }
 
         let docker = get_docker();
@@ -290,7 +291,7 @@ impl ServiceInstance {
         }
     }
 
-    pub async fn create_container(&self) -> Result<(), ServiceConfigError> {
+    pub async fn create_container(&self, trigger_type: &str) -> Result<(), ServiceConfigError> {
         log::info!("Creating container: {}", self.config.service.name);
         let docker = get_docker();
 
@@ -423,7 +424,42 @@ impl ServiceInstance {
             .name(&self.config.service.name)
             .build();
 
-        docker.create_container(Some(options), config).await?;
+        let container = docker.create_container(Some(options), config).await?;
+
+        if let Some(telemetry) = &self.telemetry {
+            let container_id = container.id.clone();
+            let options = InspectContainerOptionsBuilder::new().size(false).build();
+            if let Ok(info) = docker.inspect_container(&container_id, Some(options)).await {
+                let mut image_sha = info.image.clone().unwrap_or_default();
+                let mut image_size = 0;
+
+                if let Ok(img_info) = docker.inspect_image(&image_sha).await {
+                    image_size = img_info.size.unwrap_or(0);
+                    if let Some(digests) = img_info.repo_digests {
+                        if let Some(d) = digests.first() {
+                            image_sha = d.clone();
+                        }
+                    }
+                }
+
+                let created_at = info
+                    .created
+                    .as_ref()
+                    .and_then(|c| chrono::DateTime::parse_from_rfc3339(c).ok())
+                    .map(|dt| dt.timestamp_micros())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros());
+
+                telemetry.track_deployment(
+                    self,
+                    container_id,
+                    image_sha,
+                    image_size / 1_000_000,
+                    trigger_type.to_string(),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    created_at,
+                );
+            }
+        }
 
         // Connect to user-defined networks (default dispenser network is already connected)
         for network in &self.config.network {
@@ -452,11 +488,11 @@ impl ServiceInstance {
         Ok(())
     }
 
-    pub async fn recreate_container(&self) -> Result<(), ServiceConfigError> {
+    pub async fn recreate_container(&self, trigger_type: &str) -> Result<(), ServiceConfigError> {
         self.pull_image().await?;
         let _ = self.stop_container().await;
         let _ = self.remove_container().await;
-        self.create_container().await?;
+        self.create_container(trigger_type).await?;
         Ok(())
     }
 
@@ -503,7 +539,7 @@ impl ServiceInstance {
 
     pub async fn recreate_if_required(&self, other: &Self) {
         if self.requires_recreate(other).await {
-            if let Err(e) = self.recreate_container().await {
+            if let Err(e) = self.recreate_container("manual_reload").await {
                 log::error!(
                     "Failed to recreate container {}: {}",
                     self.config.service.name,
@@ -513,10 +549,88 @@ impl ServiceInstance {
         }
     }
 
-    pub async fn poll(&self, poll_images: bool, init: bool) {
+    async fn check_and_report_status(&self) {
+        if let Some(telemetry) = &self.telemetry {
+            let docker = get_docker();
+            let options = InspectContainerOptionsBuilder::new().size(false).build();
+
+            match docker
+                .inspect_container(&self.config.service.name, Some(options))
+                .await
+            {
+                Ok(info) => {
+                    let state = info.state.as_ref();
+                    let status = state
+                        .and_then(|s| s.status.map(|st| st.to_string()))
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let health_status = state
+                        .and_then(|s| s.health.as_ref())
+                        .and_then(|h| h.status.map(|st| st.to_string()))
+                        .unwrap_or_else(|| "none".to_string());
+                    let exit_code = state.and_then(|s| s.exit_code).map(|c| c as i32);
+                    let restart_count = info.restart_count.unwrap_or(0) as i32;
+                    let uptime_seconds = if let Some(started_at) =
+                        state.and_then(|s| s.started_at.as_ref())
+                    {
+                        match chrono::DateTime::parse_from_rfc3339(started_at) {
+                            Ok(dt) => chrono::Utc::now().signed_duration_since(dt).num_seconds(),
+                            Err(_) => 0,
+                        }
+                    } else {
+                        0
+                    };
+                    let failing_streak = state
+                        .and_then(|s| s.health.as_ref())
+                        .and_then(|h| h.failing_streak)
+                        .unwrap_or(0) as i32;
+                    let last_health_output = state
+                        .and_then(|s| s.health.as_ref())
+                        .and_then(|h| h.log.as_ref())
+                        .and_then(|logs| logs.last())
+                        .and_then(|l| l.output.clone());
+
+                    telemetry.track_status(
+                        self.config.service.name.clone(),
+                        info.id.unwrap_or_default(),
+                        status,
+                        health_status,
+                        exit_code,
+                        restart_count,
+                        uptime_seconds,
+                        failing_streak,
+                        last_health_output,
+                    );
+                }
+                Err(bollard::errors::Error::DockerResponseServerError {
+                    status_code: 404, ..
+                }) => {
+                    telemetry.track_status(
+                        self.config.service.name.clone(),
+                        String::new(),
+                        "not_found".to_string(),
+                        "none".to_string(),
+                        None,
+                        0,
+                        0,
+                        0,
+                        None,
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to inspect container {} for telemetry: {}",
+                        self.config.service.name,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    pub async fn poll(&self, poll_images: bool, poll_status: bool, init: bool) {
         if init && self.config.dispenser.initialize == Initialize::Immediately {
             log::info!("Starting {} immediately", self.config.service.name);
-            if let Err(e) = self.run_container().await {
+            if let Err(e) = self.run_container("startup").await {
                 log::error!(
                     "Failed to run container {}: {}",
                     self.config.service.name,
@@ -530,7 +644,7 @@ impl ServiceInstance {
         if let Some(cron_watcher) = &self.cron_watcher {
             if cron_watcher.is_ready() {
                 // If the cron matches we can short circuit the function
-                if let Err(e) = self.run_container().await {
+                if let Err(e) = self.run_container("cron").await {
                     log::error!(
                         "Failed to run container {} from cron: {}",
                         self.config.service.name,
@@ -553,14 +667,14 @@ impl ServiceInstance {
                             "Image updated for service {}, recreating container...",
                             self.config.service.name
                         );
-                        if let Err(e) = self.recreate_container().await {
+                        if let Err(e) = self.recreate_container("image_update").await {
                             log::error!(
                                 "Failed to recreate container {}: {}",
                                 self.config.service.name,
                                 e
                             );
                         }
-                        if let Err(e) = self.run_container().await {
+                        if let Err(e) = self.run_container("image_update").await {
                             log::error!(
                                 "Failed to run container {}: {}",
                                 self.config.service.name,
@@ -574,6 +688,10 @@ impl ServiceInstance {
                     ImageWatcherStatus::NotUpdated => {}
                 }
             }
+        }
+
+        if poll_status {
+            self.check_and_report_status().await;
         }
     }
 }
