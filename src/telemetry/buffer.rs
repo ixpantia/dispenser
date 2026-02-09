@@ -1,9 +1,9 @@
 use super::events::{ContainerStatusEvent, DeploymentEvent};
+use super::schema::{deployments_schema, status_schema};
 use arrow::array::{
     BooleanBuilder, Date32Builder, Int32Builder, Int64Builder, StringBuilder,
     TimestampMicrosecondBuilder,
 };
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
 use std::sync::Arc;
 
@@ -109,37 +109,10 @@ impl DeploymentsBuffer {
     }
 
     pub fn into_record_batch(mut self) -> arrow::error::Result<RecordBatch> {
-        let schema = Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
-            Field::new(
-                "timestamp",
-                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-                false,
-            ),
-            Field::new("service", DataType::Utf8, false),
-            Field::new("image", DataType::Utf8, false),
-            Field::new("image_sha", DataType::Utf8, false),
-            Field::new("image_size_mb", DataType::Int64, false),
-            Field::new("container_id", DataType::Utf8, false),
-            Field::new(
-                "container_created_at",
-                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-                false,
-            ),
-            Field::new("trigger_type", DataType::Utf8, false),
-            Field::new("dispenser_version", DataType::Utf8, false),
-            Field::new("restart_policy", DataType::Utf8, false),
-            Field::new("memory_limit", DataType::Utf8, true),
-            Field::new("cpu_limit", DataType::Utf8, true),
-            Field::new("proxy_enabled", DataType::Boolean, false),
-            Field::new("proxy_host", DataType::Utf8, true),
-            Field::new("port_mappings_count", DataType::Int32, false),
-            Field::new("volume_count", DataType::Int32, false),
-            Field::new("network_count", DataType::Int32, false),
-        ]);
+        let schema = deployments_schema();
 
         RecordBatch::try_new(
-            Arc::new(schema),
+            schema,
             vec![
                 Arc::new(self.date.finish()),
                 Arc::new(self.timestamp.finish().with_timezone("UTC")),
@@ -236,26 +209,10 @@ impl StatusBuffer {
     }
 
     pub fn into_record_batch(mut self) -> arrow::error::Result<RecordBatch> {
-        let schema = Schema::new(vec![
-            Field::new("date", DataType::Date32, false),
-            Field::new(
-                "timestamp",
-                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
-                false,
-            ),
-            Field::new("service", DataType::Utf8, false),
-            Field::new("container_id", DataType::Utf8, false),
-            Field::new("state", DataType::Utf8, false),
-            Field::new("health_status", DataType::Utf8, false),
-            Field::new("exit_code", DataType::Int32, true),
-            Field::new("restart_count", DataType::Int32, false),
-            Field::new("uptime_seconds", DataType::Int64, false),
-            Field::new("failing_streak", DataType::Int32, false),
-            Field::new("last_health_output", DataType::Utf8, true),
-        ]);
+        let schema = status_schema();
 
         RecordBatch::try_new(
-            Arc::new(schema),
+            schema,
             vec![
                 Arc::new(self.date.finish()),
                 Arc::new(self.timestamp.finish().with_timezone("UTC")),
