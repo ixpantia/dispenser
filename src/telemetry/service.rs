@@ -1,7 +1,7 @@
 use super::buffer::{DeploymentsBuffer, StatusBuffer};
 use super::events::DispenserEvent;
+use super::schema::{create_deployments_table, create_status_table};
 use crate::service::file::TelemetryConfig;
-use deltalake::kernel::StructField;
 use deltalake::{DeltaOps, DeltaTableError};
 use log::{error, info, warn};
 use std::time::{Duration, Instant};
@@ -92,7 +92,7 @@ impl TelemetryService {
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_deployments, batch)
+                        .write_to_delta(&self.config.table_uri_deployments, batch, true)
                         .await
                     {
                         error!("Failed to write deployment events to Delta Lake: {:?}", e);
@@ -115,7 +115,7 @@ impl TelemetryService {
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_status, batch)
+                        .write_to_delta(&self.config.table_uri_status, batch, false)
                         .await
                     {
                         error!("Failed to write status events to Delta Lake: {:?}", e);
@@ -137,20 +137,16 @@ impl TelemetryService {
         &self,
         table_uri: &str,
         batch: arrow::record_batch::RecordBatch,
+        is_deployments: bool,
     ) -> Result<(), DeltaTableError> {
         let table = match deltalake::open_table(table_uri).await {
             Ok(table) => table,
             Err(DeltaTableError::NotATable(_)) => {
-                let ops = DeltaOps::try_from_uri(table_uri).await?;
-                ops.create()
-                    .with_columns(
-                        batch
-                            .schema()
-                            .fields()
-                            .iter()
-                            .map(|f| StructField::try_from(f.as_ref()).unwrap()),
-                    )
-                    .await?
+                if is_deployments {
+                    create_deployments_table(table_uri).await?
+                } else {
+                    create_status_table(table_uri).await?
+                }
             }
             Err(e) => return Err(e),
         };
