@@ -130,3 +130,18 @@ Dispenser also enforces a time-based flush every **5 minutes** to ensure data is
 ### Resource Isolation
 
 The telemetry service runs on a dedicated Tokio runtime spawned in a separate OS thread. This design ensures that network latency when talking to S3/GCS or CPU-intensive compression of Parquet files does not impact the responsiveness of the main Dispenser loop or the reverse proxy.
+
+## Data Management
+
+### Partitioning & Optimization
+
+*   **Partitioning**: Data is automatically partitioned by `date`. Query engines should always filter by date (e.g., `WHERE date = CURRENT_DATE`) for optimal performance.
+*   **Target File Size**: Dispenser aims for **32MB** Parquet files to balance ingestion latency with query efficiency.
+*   **Data Skipping**: Key columns like `service` and `container_id` are indexed in Delta Lake stats to allow engines to skip irrelevant files.
+
+### Retention Policies
+
+To prevent indefinite storage growth, Dispenser applies the following default retention policies during table creation:
+
+*   **Log Retention**: 30 days (Deployments), 7 days (Status). Delta log history is kept for time-travel queries.
+*   **Deleted Files**: 7 days (Deployments), 1 day (Status). Vacuum operations can reclaim space after this period.
