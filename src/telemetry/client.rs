@@ -1,4 +1,5 @@
 use super::events::{ContainerStatusEvent, DeploymentEvent, DispenserEvent};
+use super::types::{ContainerState, HealthStatus, TriggerType};
 use crate::service::instance::ServiceInstance;
 use log::error;
 use tokio::sync::mpsc::Sender;
@@ -20,7 +21,7 @@ impl TelemetryClient {
         container_id: String,
         image_sha: String,
         image_size_mb: i64,
-        trigger_type: String,
+        trigger_type: TriggerType,
         dispenser_version: String,
         container_created_at: i64,
     ) {
@@ -41,7 +42,7 @@ impl TelemetryClient {
             container_created_at,
             trigger_type,
             dispenser_version,
-            restart_policy: format!("{:?}", svc_entry.restart),
+            restart_policy: svc_entry.restart.clone(),
             memory_limit: svc_entry.memory.clone(),
             cpu_limit: svc_entry.cpus.clone(),
             proxy_enabled: config.proxy.is_some(),
@@ -58,8 +59,8 @@ impl TelemetryClient {
         &self,
         service_name: String,
         container_id: String,
-        state: String,
-        health_status: String,
+        state: ContainerState,
+        health_status: HealthStatus,
         exit_code: Option<i32>,
         restart_count: i32,
         uptime_seconds: i64,

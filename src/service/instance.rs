@@ -25,6 +25,7 @@ use crate::service::{
     manifest::{ImageWatcher, ImageWatcherStatus},
     network::DEFAULT_NETWORK_NAME,
 };
+use crate::telemetry::types::{ContainerState, HealthStatus as TelemetryHealthStatus, TriggerType};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ServiceInstanceConfig {
@@ -100,7 +101,7 @@ async fn get_container_status(container_name: &str) -> Result<ContainerStatus, S
 }
 
 impl ServiceInstance {
-    pub async fn run_container(&self, trigger_type: &str) -> Result<(), ServiceConfigError> {
+    pub async fn run_container(&self, trigger_type: TriggerType) -> Result<(), ServiceConfigError> {
         let mut depends_on_conditions = Vec::with_capacity(self.config.depends_on.len());
         loop {
             for (container, condition) in &self.config.depends_on {
@@ -291,7 +292,10 @@ impl ServiceInstance {
         }
     }
 
-    pub async fn create_container(&self, trigger_type: &str) -> Result<(), ServiceConfigError> {
+    pub async fn create_container(
+        &self,
+        trigger_type: TriggerType,
+    ) -> Result<(), ServiceConfigError> {
         log::info!("Creating container: {}", self.config.service.name);
         let docker = get_docker();
 
@@ -454,7 +458,7 @@ impl ServiceInstance {
                     container_id,
                     image_sha,
                     image_size / 1_000_000,
-                    trigger_type.to_string(),
+                    trigger_type,
                     env!("CARGO_PKG_VERSION").to_string(),
                     created_at,
                 );
@@ -488,7 +492,10 @@ impl ServiceInstance {
         Ok(())
     }
 
-    pub async fn recreate_container(&self, trigger_type: &str) -> Result<(), ServiceConfigError> {
+    pub async fn recreate_container(
+        &self,
+        trigger_type: TriggerType,
+    ) -> Result<(), ServiceConfigError> {
         self.pull_image().await?;
         let _ = self.stop_container().await;
         let _ = self.remove_container().await;
@@ -539,7 +546,7 @@ impl ServiceInstance {
 
     pub async fn recreate_if_required(&self, other: &Self) {
         if self.requires_recreate(other).await {
-            if let Err(e) = self.recreate_container("manual_reload").await {
+            if let Err(e) = self.recreate_container(TriggerType::ManualReload).await {
                 log::error!(
                     "Failed to recreate container {}: {}",
                     self.config.service.name,
@@ -560,13 +567,15 @@ impl ServiceInstance {
             {
                 Ok(info) => {
                     let state = info.state.as_ref();
-                    let status = state
-                        .and_then(|s| s.status.map(|st| st.to_string()))
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let container_state = state
+                        .and_then(|s| s.status)
+                        .map(ContainerState::from)
+                        .unwrap_or(ContainerState::Unknown);
                     let health_status = state
                         .and_then(|s| s.health.as_ref())
-                        .and_then(|h| h.status.map(|st| st.to_string()))
-                        .unwrap_or_else(|| "none".to_string());
+                        .and_then(|h| h.status)
+                        .map(TelemetryHealthStatus::from)
+                        .unwrap_or(TelemetryHealthStatus::None);
                     let exit_code = state.and_then(|s| s.exit_code).map(|c| c as i32);
                     let restart_count = info.restart_count.unwrap_or(0) as i32;
                     let uptime_seconds = if let Some(started_at) =
@@ -592,7 +601,7 @@ impl ServiceInstance {
                     telemetry.track_status(
                         self.config.service.name.clone(),
                         info.id.unwrap_or_default(),
-                        status,
+                        container_state,
                         health_status,
                         exit_code,
                         restart_count,
@@ -607,8 +616,8 @@ impl ServiceInstance {
                     telemetry.track_status(
                         self.config.service.name.clone(),
                         String::new(),
-                        "not_found".to_string(),
-                        "none".to_string(),
+                        ContainerState::NotFound,
+                        TelemetryHealthStatus::None,
                         None,
                         0,
                         0,
@@ -630,7 +639,7 @@ impl ServiceInstance {
     pub async fn poll(&self, poll_images: bool, poll_status: bool, init: bool) {
         if init && self.config.dispenser.initialize == Initialize::Immediately {
             log::info!("Starting {} immediately", self.config.service.name);
-            if let Err(e) = self.run_container("startup").await {
+            if let Err(e) = self.run_container(TriggerType::Startup).await {
                 log::error!(
                     "Failed to run container {}: {}",
                     self.config.service.name,
@@ -644,7 +653,7 @@ impl ServiceInstance {
         if let Some(cron_watcher) = &self.cron_watcher {
             if cron_watcher.is_ready() {
                 // If the cron matches we can short circuit the function
-                if let Err(e) = self.run_container("cron").await {
+                if let Err(e) = self.run_container(TriggerType::Cron).await {
                     log::error!(
                         "Failed to run container {} from cron: {}",
                         self.config.service.name,
@@ -667,14 +676,14 @@ impl ServiceInstance {
                             "Image updated for service {}, recreating container...",
                             self.config.service.name
                         );
-                        if let Err(e) = self.recreate_container("image_update").await {
+                        if let Err(e) = self.recreate_container(TriggerType::ImageUpdate).await {
                             log::error!(
                                 "Failed to recreate container {}: {}",
                                 self.config.service.name,
                                 e
                             );
                         }
-                        if let Err(e) = self.run_container("image_update").await {
+                        if let Err(e) = self.run_container(TriggerType::ImageUpdate).await {
                             log::error!(
                                 "Failed to run container {}: {}",
                                 self.config.service.name,

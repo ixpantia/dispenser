@@ -2,8 +2,9 @@ use super::events::{ContainerStatusEvent, DeploymentEvent};
 use super::schema::{deployments_schema, status_schema};
 use arrow::array::{
     BooleanBuilder, Date32Builder, Int32Builder, Int64Builder, StringBuilder,
-    TimestampMicrosecondBuilder,
+    StringDictionaryBuilder, TimestampMicrosecondBuilder,
 };
+use arrow::datatypes::Int8Type;
 use arrow::record_batch::RecordBatch;
 use std::sync::Arc;
 
@@ -16,9 +17,9 @@ pub struct DeploymentsBuffer {
     image_size_mb: Int64Builder,
     container_id: StringBuilder,
     container_created_at: TimestampMicrosecondBuilder,
-    trigger_type: StringBuilder,
+    trigger_type: StringDictionaryBuilder<Int8Type>,
     dispenser_version: StringBuilder,
-    restart_policy: StringBuilder,
+    restart_policy: StringDictionaryBuilder<Int8Type>,
     memory_limit: StringBuilder,
     cpu_limit: StringBuilder,
     proxy_enabled: BooleanBuilder,
@@ -41,9 +42,9 @@ impl DeploymentsBuffer {
             image_size_mb: Int64Builder::with_capacity(capacity),
             container_id: StringBuilder::with_capacity(capacity, capacity * 64),
             container_created_at: TimestampMicrosecondBuilder::with_capacity(capacity),
-            trigger_type: StringBuilder::with_capacity(capacity, capacity * 10),
+            trigger_type: StringDictionaryBuilder::new(),
             dispenser_version: StringBuilder::with_capacity(capacity, capacity * 10),
-            restart_policy: StringBuilder::with_capacity(capacity, capacity * 10),
+            restart_policy: StringDictionaryBuilder::new(),
             memory_limit: StringBuilder::with_capacity(capacity, capacity * 5),
             cpu_limit: StringBuilder::with_capacity(capacity, capacity * 5),
             proxy_enabled: BooleanBuilder::with_capacity(capacity),
@@ -67,10 +68,17 @@ impl DeploymentsBuffer {
         self.container_id.append_value(&event.container_id);
         self.container_created_at
             .append_value(event.container_created_at);
-        self.trigger_type.append_value(&event.trigger_type);
+        self.trigger_type.append_value(event.trigger_type.as_ref());
         self.dispenser_version
             .append_value(&event.dispenser_version);
-        self.restart_policy.append_value(&event.restart_policy);
+
+        let restart_policy_str = match event.restart_policy {
+            crate::service::file::Restart::Always => "always",
+            crate::service::file::Restart::No => "no",
+            crate::service::file::Restart::OnFailure => "on-failure",
+            crate::service::file::Restart::UnlessStopped => "unless-stopped",
+        };
+        self.restart_policy.append_value(restart_policy_str);
 
         if let Some(val) = &event.memory_limit {
             self.memory_limit.append_value(val);
@@ -142,8 +150,8 @@ pub struct StatusBuffer {
     timestamp: TimestampMicrosecondBuilder,
     service: StringBuilder,
     container_id: StringBuilder,
-    state: StringBuilder,
-    health_status: StringBuilder,
+    state: StringDictionaryBuilder<Int8Type>,
+    health_status: StringDictionaryBuilder<Int8Type>,
     exit_code: Int32Builder,
     restart_count: Int32Builder,
     uptime_seconds: Int64Builder,
@@ -160,8 +168,8 @@ impl StatusBuffer {
             timestamp: TimestampMicrosecondBuilder::with_capacity(capacity),
             service: StringBuilder::with_capacity(capacity, capacity * 20),
             container_id: StringBuilder::with_capacity(capacity, capacity * 64),
-            state: StringBuilder::with_capacity(capacity, capacity * 10),
-            health_status: StringBuilder::with_capacity(capacity, capacity * 10),
+            state: StringDictionaryBuilder::new(),
+            health_status: StringDictionaryBuilder::new(),
             exit_code: Int32Builder::with_capacity(capacity),
             restart_count: Int32Builder::with_capacity(capacity),
             uptime_seconds: Int64Builder::with_capacity(capacity),
@@ -178,8 +186,9 @@ impl StatusBuffer {
         self.timestamp.append_value(event.timestamp);
         self.service.append_value(&event.service);
         self.container_id.append_value(&event.container_id);
-        self.state.append_value(&event.state);
-        self.health_status.append_value(&event.health_status);
+        self.state.append_value(event.state.as_ref());
+        self.health_status
+            .append_value(event.health_status.as_ref());
 
         if let Some(val) = event.exit_code {
             self.exit_code.append_value(val);
@@ -233,7 +242,9 @@ impl StatusBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::file::Restart;
     use crate::telemetry::events::DeploymentEvent;
+    use crate::telemetry::types::TriggerType;
     use arrow::datatypes::{DataType, TimeUnit};
     use uuid::Uuid;
 
@@ -250,9 +261,9 @@ mod tests {
             image_size_mb: 100,
             container_id: "cid-1".to_string(),
             container_created_at: 1700000000000000,
-            trigger_type: "manual".to_string(),
+            trigger_type: TriggerType::ManualReload,
             dispenser_version: "1.0".to_string(),
-            restart_policy: "always".to_string(),
+            restart_policy: Restart::Always,
             memory_limit: Some("512m".to_string()),
             cpu_limit: None,
             proxy_enabled: true,
