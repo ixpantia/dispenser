@@ -64,6 +64,7 @@ pub fn handle_reload(reload_signal: Arc<tokio::sync::Notify>) {
 pub async fn reload_manager(
     manager_holder: Arc<Mutex<Arc<ServicesManager>>>,
     service_filter: Option<&[String]>,
+    telemetry: Option<crate::telemetry::TelemetryClient>,
 ) -> Result<(), String> {
     let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Reloading]);
 
@@ -86,7 +87,9 @@ pub async fn reload_manager(
 
     // Create a new manager with the new configuration, passing existing IPs
     let new_manager =
-        match ServicesManager::from_config(service_manager_config, Some(existing_ips)).await {
+        match ServicesManager::from_config(service_manager_config, Some(existing_ips), telemetry)
+            .await
+        {
             Ok(manager) => Arc::new(manager),
             Err(e) => {
                 log::error!("Failed to create new services manager: {e}");

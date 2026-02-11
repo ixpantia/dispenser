@@ -1,15 +1,24 @@
 # Dispenser
 
-Dispenser is a simple, declarative, and deterministic container orchestrator designed for single virtual machines. It combines continuous deployment (CD), a built-in reverse proxy with automatic SSL, and cron scheduling into a single binary, eliminating the need for complex external tooling or manual bash scripts.
+Dispenser is a simple, declarative, and deterministic container orchestrator designed for single virtual machines. It combines continuous deployment (CD), a built-in reverse proxy with automatic SSL, cron scheduling, and **native telemetry** into a single binary, eliminating the need for complex external tooling or manual bash scripts.
 
 This tool manages containerized applications by continuously monitoring your artifact registry for new versions of Docker images. When updates are detected, dispenser automatically redeploys your services, ensuring the running containers on the host machine match the latest versions in your registry.
 
 dispenser operates as a daemon that runs in the background on the host server that watches your artifact registry, detecting when new versions of your container images are published.
 
+## Key Features
+
+- **Continuous Deployment**: Automatically watches your registry and updates containers when new images are published.
+- **Built-in Reverse Proxy**: Powered by [Pingora](https://github.com/cloudflare/pingora), handling SSL/TLS termination and zero-downtime reloads.
+- **Observability & Telemetry**: Native integration with **Delta Lake** to stream deployment events and container health metrics directly to S3, GCS, Azure, or local storage.
+- **Cron Scheduling**: Run containers on a schedule using standard cron syntax, perfect for backups and batch jobs.
+- **Declarative Configuration**: Define your entire infrastructure in simple TOML files.
+
 ## Documentation
 
 - **[CLI Reference](CLI.md)** - Complete command-line options and usage
 - **[Service Configuration](SERVICE_CONFIG.md)** - Detailed `service.toml` reference
+- **[Telemetry Configuration](TELEMETRY.md)** - Delta Lake integration
 - **[Reverse Proxy](PROXY.md)** - Built-in proxy and SSL management
 - **[Network Configuration](NETWORKS.md)** - Docker network setup guide
 - **[Cron Scheduling](CRON.md)** - Scheduled deployments
