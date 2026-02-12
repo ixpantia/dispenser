@@ -85,7 +85,7 @@ Dispenser acts as a sidecar host for your services. When telemetry is enabled, D
 
 Dispenser automatically injects the following environment variables into all managed containers to simplify instrumentation:
 
-*   `OTEL_EXPORTER_OTLP_ENDPOINT="http://172.28.0.1:4318"`
+*   `OTEL_EXPORTER_OTLP_ENDPOINT="http://host.docker.internal:4318"`
 *   `OTEL_SERVICE_NAME="{service_name}"` (The name from your `service.toml`)
 
 Standard OTel SDKs will automatically detect these variables and begin shipping logs and traces to Dispenser without further configuration.

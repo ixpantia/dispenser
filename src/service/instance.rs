@@ -405,8 +405,7 @@ impl ServiceInstance {
         if self.telemetry.is_some() {
             if !self.config.env.contains_key("OTEL_EXPORTER_OTLP_ENDPOINT") {
                 env.push(format!(
-                    "OTEL_EXPORTER_OTLP_ENDPOINT=http://{}:{}",
-                    crate::service::network::DEFAULT_NETWORK_GATEWAY,
+                    "OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:{}",
                     crate::telemetry::ingestion::OTLP_HTTP_PORT
                 ));
             }
@@ -455,6 +454,9 @@ impl ServiceInstance {
             (cpus * 1_000_000_000.0) as i64
         });
 
+        // Build extra hosts to allow reaching the ingestion service on the host via host.docker.internal
+        let extra_hosts = Some(vec!["host.docker.internal:host-gateway".to_string()]);
+
         // Build host config
         // Always connect to the default dispenser network first
         let host_config = HostConfig {
@@ -468,6 +470,7 @@ impl ServiceInstance {
             memory,
             nano_cpus,
             network_mode: Some(DEFAULT_NETWORK_NAME.to_string()),
+            extra_hosts,
             ..Default::default()
         };
 
