@@ -1,6 +1,6 @@
 # Telemetry Configuration
 
-Dispenser includes a built-in, high-performance telemetry system powered by [Delta Lake](https://delta.io/). It allows you to automatically collect deployment events and container health status, writing them directly to data lakes (S3, GCS, Azure) or local filesystems in Parquet format.
+Dispenser includes a built-in, high-performance telemetry system powered by [Delta Lake](https://delta.io/). It allows you to automatically collect deployment events, container health status, application logs/traces, and raw container output, writing them directly to data lakes (S3, GCS, Azure) or local filesystems in Parquet format.
 
 ## Overview
 
@@ -8,7 +8,9 @@ The telemetry system runs in a dedicated, isolated thread to ensure that heavy I
 
 1.  **Deployment Tracking**: Every time a container is created, updated, or restarted, a detailed event is logged.
 2.  **Health Monitoring**: Periodically samples the status of all managed containers (CPU, memory, uptime, health checks).
-3.  **Delta Lake Integration**: Writes data using the Delta Lake protocol, enabling ACID transactions, scalable metadata handling, and direct compatibility with tools like Spark, Trino, Athena, and Databricks.
+3.  **Application Telemetry (OTLP)**: Ingests structured logs and traces from services using standard OpenTelemetry SDKs.
+4.  **Container Output**: Captures raw `stdout` and `stderr` streams from all managed containers with sequence-guaranteed ordering.
+5.  **Delta Lake Integration**: Writes data using the Delta Lake protocol, enabling ACID transactions, scalable metadata handling, and direct compatibility with tools like Spark, Trino, Athena, and Databricks.
 
 ## Configuration
 
@@ -24,6 +26,9 @@ enabled = true
 # Supported schemes: file://, s3://, gs://, az://, adls://
 table_uri_deployments = "s3://my-data-lake/dispenser/deployments"
 table_uri_status = "s3://my-data-lake/dispenser/status"
+table_uri_logs = "s3://my-data-lake/dispenser/logs"
+table_uri_traces = "s3://my-data-lake/dispenser/traces"
+table_uri_container_output = "s3://my-data-lake/dispenser/container-output"
 
 # Optional: How often to sample container status (default: 60 seconds)
 status_interval = 60
@@ -69,9 +74,25 @@ Dispenser supports several authentication methods via environment variables:
 *   Service Principal: `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`.
 *   Managed Identity (if running on Azure VMs/AKS).
 
+## OpenTelemetry (OTLP) Ingestion
+
+Dispenser acts as a sidecar host for your services. When telemetry is enabled, Dispenser starts an **Ingestion Service** listening on.
+
+*   **Endpoint**: `http://0.0.0.0:4318`
+*   **Protocol**: OTLP/HTTP (JSON)
+
+### Automatic Environment Variables
+
+Dispenser automatically injects the following environment variables into all managed containers to simplify instrumentation:
+
+*   `OTEL_EXPORTER_OTLP_ENDPOINT="http://172.28.0.1:4318"`
+*   `OTEL_SERVICE_NAME="{service_name}"` (The name from your `service.toml`)
+
+Standard OTel SDKs will automatically detect these variables and begin shipping logs and traces to Dispenser without further configuration.
+
 ## Data Schemas
 
-Dispenser automatically manages two Delta tables. It will create them if they do not exist.
+Dispenser automatically manages several Delta tables. It will create them if they do not exist.
 
 ### Deployments Table (`dispenser-deployments`)
 
@@ -115,6 +136,56 @@ Records periodic snapshots of the runtime state of containers.
 | `uptime_seconds` | `LONG` | Seconds since the container started. |
 | `failing_streak` | `INTEGER` | Consecutive healthcheck failures. |
 | `last_health_output` | `STRING` | Output of the last failed healthcheck (truncated). |
+
+### Logs Table (`dispenser-logs`)
+
+Stores structured logs emitted by applications via OTel.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `date` | `DATE` | Partition column (UTC). |
+| `timestamp` | `TIMESTAMP` | Exact time of the log entry. |
+| `service` | `STRING` | Service name. |
+| `severity` | `STRING` | INFO, WARN, ERROR, etc. |
+| `body` | `STRING` | The log message. |
+| `trace_id` | `STRING` | Associated trace ID (hex). |
+| `span_id` | `STRING` | Associated span ID (hex). |
+| `attributes` | `MAP<STRING, STRING>` | Flattened log attributes. |
+| `resource` | `MAP<STRING, STRING>` | Resource attributes (pod, node, etc). |
+
+### Traces Table (`dispenser-traces`)
+
+Stores distributed tracing spans.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `date` | `DATE` | Partition column. |
+| `trace_id` | `STRING` | Trace ID (32-char hex). |
+| `span_id` | `STRING` | Span ID (16-char hex). |
+| `parent_span_id` | `STRING` | Parent Span ID. |
+| `name` | `STRING` | Span name (e.g., "GET /api/users"). |
+| `kind` | `STRING` | SERVER, CLIENT, PRODUCER, etc. |
+| `start_time` | `TIMESTAMP` | Start time. |
+| `end_time` | `TIMESTAMP` | End time. |
+| `duration_ms` | `LONG` | Calculated duration. |
+| `status_code` | `STRING` | OK, ERROR. |
+| `status_message` | `STRING` | Error description. |
+| `service` | `STRING` | Service name. |
+| `attributes` | `MAP<STRING, STRING>` | Span attributes. |
+
+### Container Output Table (`dispenser-container-output`)
+
+Captures raw `stdout` and `stderr` streams.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `date` | `DATE` | Partition column. |
+| `timestamp` | `TIMESTAMP` | Exact time of the log line. |
+| `service` | `STRING` | Service name. |
+| `container_id` | `STRING` | Full container ID. |
+| `stream` | `STRING` | `stdout` or `stderr`. |
+| `message` | `STRING` | The raw log line. |
+| `sequence` | `LONG` | Monotonically increasing counter for perfect ordering. |
 
 ## Performance Tuning
 

@@ -66,6 +66,9 @@ pub struct TelemetryConfig {
     pub enabled: bool,
     pub table_uri_deployments: String,
     pub table_uri_status: String,
+    pub table_uri_logs: String,
+    pub table_uri_traces: String,
+    pub table_uri_container_output: String,
     pub buffer_size: Option<usize>,
     #[serde(default = "default_status_interval")]
     pub status_interval: u64,
