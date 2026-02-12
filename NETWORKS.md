@@ -399,6 +399,16 @@ name = "app-network"
 POSTGRES_DB = "mydb"
 ```
 
+### Communicating with the Host
+
+In some cases, containers need to communicate with services running on the host machine (such as the Dispenser Telemetry Ingestion Service). 
+
+Dispenser automatically configures `host.docker.internal` to resolve to the host's gateway IP for all managed containers using the `host-gateway` mapping.
+
+**Example:**
+To reach a service running on the host at port `4318`:
+`http://host.docker.internal:4318`
+
 ### Network Isolation
 
 Use internal networks to isolate sensitive services:

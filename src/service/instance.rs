@@ -1,6 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
+use bollard::container::LogOutput;
 use bollard::models::{
     ContainerCreateBody, EndpointIpamConfig, EndpointSettings, HealthStatusEnum, HostConfig,
     NetworkConnectRequest, NetworkingConfig, PortBinding, RestartPolicy, RestartPolicyNameEnum,
@@ -8,7 +9,7 @@ use bollard::models::{
 use bollard::query_parameters::{
     CreateContainerOptions, CreateContainerOptionsBuilder, CreateImageOptions,
     CreateImageOptionsBuilder, InspectContainerOptions, InspectContainerOptionsBuilder,
-    RemoveContainerOptions, RemoveContainerOptionsBuilder, StartContainerOptions,
+    LogsOptions, RemoveContainerOptions, RemoveContainerOptionsBuilder, StartContainerOptions,
     StartContainerOptionsBuilder, StopContainerOptions, StopContainerOptionsBuilder,
 };
 use futures_util::StreamExt;
@@ -49,6 +50,7 @@ pub struct ServiceInstance {
     pub cron_watcher: Option<CronWatcher>,
     pub image_watcher: Option<ImageWatcher>,
     pub telemetry: Option<crate::telemetry::TelemetryClient>,
+    pub log_watcher: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,11 +167,72 @@ impl ServiceInstance {
             self.config.service.name
         );
 
+        self.start_log_watcher().await;
+
         Ok(())
     }
 
     /// Get the socket address for this service if proxy is configured.
     /// The address is computed directly from the static IP and service port.
+    async fn start_log_watcher(&self) {
+        let telemetry = match &self.telemetry {
+            Some(t) => t.clone(),
+            None => return,
+        };
+
+        let mut log_watcher = self.log_watcher.lock().await;
+        if log_watcher.is_some() {
+            return;
+        }
+
+        let container_name = self.config.service.name.clone();
+        let service_name = self.config.service.name.clone();
+        let docker = get_docker();
+
+        let options = Some(LogsOptions {
+            follow: true,
+            stdout: true,
+            stderr: true,
+            tail: "0".to_string(),
+            ..Default::default()
+        });
+
+        let handle = tokio::spawn(async move {
+            let mut stream = docker.logs(&container_name, options);
+
+            while let Some(log_result) = stream.next().await {
+                match log_result {
+                    Ok(output) => {
+                        let (stream, message) = match output {
+                            LogOutput::StdOut { message } => ("stdout", message),
+                            LogOutput::StdErr { message } => ("stderr", message),
+                            _ => continue,
+                        };
+
+                        let text = String::from_utf8_lossy(&message).to_string();
+                        for line in text.lines() {
+                            if line.is_empty() {
+                                continue;
+                            }
+                            telemetry.track_container_output(
+                                service_name.clone(),
+                                container_name.clone(),
+                                stream.to_string(),
+                                line.to_string(),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::debug!("Error reading logs for {}: {}", container_name, e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        *log_watcher = Some(handle);
+    }
+
     pub fn get_socket_addr(&self) -> Option<SocketAddrV4> {
         self.config.proxy.as_ref().map(|proxy_settings| {
             SocketAddrV4::new(self.config.assigned_ip, proxy_settings.service_port)
@@ -331,12 +394,31 @@ impl ServiceInstance {
             .collect::<Result<_, ServiceConfigError>>()?;
 
         // Build environment variables
-        let env: Vec<String> = self
+        let mut env: Vec<String> = self
             .config
             .env
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
+
+        // Inject telemetry environment variables if enabled and not already provided by user
+        if self.telemetry.is_some() {
+            if !self.config.env.contains_key("OTEL_EXPORTER_OTLP_ENDPOINT") {
+                env.push(format!(
+                    "OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:{}",
+                    crate::telemetry::ingestion::OTLP_HTTP_PORT
+                ));
+            }
+            if !self.config.env.contains_key("OTEL_SERVICE_NAME") {
+                env.push(format!("OTEL_SERVICE_NAME={}", self.config.service.name));
+            }
+            if !self.config.env.contains_key("OTEL_METRICS_EXPORTER") {
+                env.push("OTEL_METRICS_EXPORTER=http".to_string());
+            }
+            if !self.config.env.contains_key("OTEL_EXPORTER_OTLP_PROTOCOL") {
+                env.push("OTEL_EXPORTER_OTLP_PROTOCOL=http/json".to_string());
+            }
+        }
 
         // Build restart policy
         let restart_policy = match self.config.service.restart {
@@ -372,6 +454,9 @@ impl ServiceInstance {
             (cpus * 1_000_000_000.0) as i64
         });
 
+        // Build extra hosts to allow reaching the ingestion service on the host via host.docker.internal
+        let extra_hosts = Some(vec!["host.docker.internal:host-gateway".to_string()]);
+
         // Build host config
         // Always connect to the default dispenser network first
         let host_config = HostConfig {
@@ -385,6 +470,7 @@ impl ServiceInstance {
             memory,
             nano_cpus,
             network_mode: Some(DEFAULT_NETWORK_NAME.to_string()),
+            extra_hosts,
             ..Default::default()
         };
 
@@ -637,6 +723,10 @@ impl ServiceInstance {
     }
 
     pub async fn poll(&self, poll_images: bool, poll_status: bool, init: bool) {
+        if poll_status {
+            self.start_log_watcher().await;
+        }
+
         if init && self.config.dispenser.initialize == Initialize::Immediately {
             log::info!("Starting {} immediately", self.config.service.name);
             if let Err(e) = self.run_container(TriggerType::Startup).await {
