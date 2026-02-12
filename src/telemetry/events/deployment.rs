@@ -1,4 +1,4 @@
-use super::types::{ContainerState, HealthStatus, TriggerType};
+use super::super::types::TriggerType;
 use crate::service::file::Restart;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -25,26 +25,4 @@ pub struct DeploymentEvent {
     pub port_mappings_count: i32,
     pub volume_count: i32,
     pub network_count: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContainerStatusEvent {
-    pub event_id: Uuid,
-    /// Timestamp in microseconds (UTC)
-    pub timestamp: i64,
-    pub service: String,
-    pub container_id: String,
-    pub state: ContainerState,
-    pub health_status: HealthStatus,
-    pub exit_code: Option<i32>,
-    pub restart_count: i32,
-    pub uptime_seconds: i64,
-    pub failing_streak: i32,
-    pub last_health_output: Option<String>,
-}
-
-#[derive(Debug)]
-pub enum DispenserEvent {
-    Deployment(Box<DeploymentEvent>),
-    ContainerStatus(Box<ContainerStatusEvent>),
 }

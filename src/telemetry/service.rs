@@ -1,6 +1,11 @@
-use super::buffer::{DeploymentsBuffer, StatusBuffer};
+use super::buffer::{
+    ContainerOutputBuffer, DeploymentsBuffer, LogsBuffer, SpansBuffer, StatusBuffer,
+};
 use super::events::DispenserEvent;
-use super::schema::{create_deployments_table, create_status_table};
+use super::schema::{
+    create_container_output_table, create_deployments_table, create_logs_table,
+    create_status_table, create_traces_table,
+};
 use crate::service::file::TelemetryConfig;
 use deltalake::{DeltaOps, DeltaTableError};
 use log::{error, info, warn};
@@ -8,13 +13,16 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
 
 const DEFAULT_BUFFER_SIZE: usize = 1000;
-const FLUSH_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
+const FLUSH_INTERVAL: Duration = Duration::from_secs(60); // 1 minute
 
 pub struct TelemetryService {
     config: TelemetryConfig,
     rx: Receiver<DispenserEvent>,
     deployments_buffer: DeploymentsBuffer,
     status_buffer: StatusBuffer,
+    logs_buffer: LogsBuffer,
+    spans_buffer: SpansBuffer,
+    container_output_buffer: ContainerOutputBuffer,
     buffer_limit: usize,
 }
 
@@ -26,6 +34,9 @@ impl TelemetryService {
             rx,
             deployments_buffer: DeploymentsBuffer::new(buffer_limit),
             status_buffer: StatusBuffer::new(buffer_limit),
+            logs_buffer: LogsBuffer::new(buffer_limit * 10), // Logs and spans can be higher volume
+            spans_buffer: SpansBuffer::new(buffer_limit * 10),
+            container_output_buffer: ContainerOutputBuffer::new(buffer_limit * 10),
             buffer_limit,
         }
     }
@@ -57,8 +68,13 @@ impl TelemetryService {
                     }
                 }
                 _ = flush_interval.tick() => {
-                    if !self.deployments_buffer.is_empty() || !self.status_buffer.is_empty() {
-                         self.flush().await;
+                    if !self.deployments_buffer.is_empty()
+                        || !self.status_buffer.is_empty()
+                        || !self.logs_buffer.is_empty()
+                        || !self.spans_buffer.is_empty()
+                        || !self.container_output_buffer.is_empty()
+                    {
+                        self.flush().await;
                     }
                 }
             }
@@ -70,12 +86,18 @@ impl TelemetryService {
         match event {
             DispenserEvent::Deployment(e) => self.deployments_buffer.push(&e),
             DispenserEvent::ContainerStatus(e) => self.status_buffer.push(&e),
+            DispenserEvent::LogBatch(data) => self.logs_buffer.push_logs_data(&data),
+            DispenserEvent::SpanBatch(data) => self.spans_buffer.push_traces_data(&data),
+            DispenserEvent::ContainerOutput(e) => self.container_output_buffer.push(&e),
         }
     }
 
     fn should_flush(&self) -> bool {
         self.deployments_buffer.len() >= self.buffer_limit
             || self.status_buffer.len() >= self.buffer_limit
+            || self.logs_buffer.len() >= self.buffer_limit * 10
+            || self.spans_buffer.len() >= self.buffer_limit * 10
+            || self.container_output_buffer.len() >= self.buffer_limit * 10
     }
 
     async fn flush(&mut self) {
@@ -92,7 +114,11 @@ impl TelemetryService {
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_deployments, batch, true)
+                        .write_to_delta(
+                            &self.config.table_uri_deployments,
+                            batch,
+                            TableType::Deployments,
+                        )
                         .await
                     {
                         error!("Failed to write deployment events to Delta Lake: {:?}", e);
@@ -115,7 +141,7 @@ impl TelemetryService {
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_status, batch, false)
+                        .write_to_delta(&self.config.table_uri_status, batch, TableType::Status)
                         .await
                     {
                         error!("Failed to write status events to Delta Lake: {:?}", e);
@@ -124,6 +150,85 @@ impl TelemetryService {
                     }
                 }
                 Err(e) => error!("Failed to create record batch for status: {:?}", e),
+            }
+        }
+
+        // Flush Logs
+        if !self.logs_buffer.is_empty() {
+            let count = self.logs_buffer.len();
+            let old_buffer = std::mem::replace(
+                &mut self.logs_buffer,
+                LogsBuffer::new(self.buffer_limit * 10),
+            );
+
+            match old_buffer.into_record_batch() {
+                Ok(batch) => {
+                    if let Err(e) = self
+                        .write_to_delta(&self.config.table_uri_logs, batch, TableType::Logs)
+                        .await
+                    {
+                        error!("Failed to write log events to Delta Lake: {:?}", e);
+                    } else {
+                        info!("Flushed {} log events to Delta Lake", count);
+                    }
+                }
+                Err(e) => error!("Failed to create record batch for logs: {:?}", e),
+            }
+        }
+
+        // Flush Spans
+        if !self.spans_buffer.is_empty() {
+            let count = self.spans_buffer.len();
+            let old_buffer = std::mem::replace(
+                &mut self.spans_buffer,
+                SpansBuffer::new(self.buffer_limit * 10),
+            );
+
+            match old_buffer.into_record_batch() {
+                Ok(batch) => {
+                    if let Err(e) = self
+                        .write_to_delta(&self.config.table_uri_traces, batch, TableType::Traces)
+                        .await
+                    {
+                        error!("Failed to write trace events to Delta Lake: {:?}", e);
+                    } else {
+                        info!("Flushed {} trace events to Delta Lake", count);
+                    }
+                }
+                Err(e) => error!("Failed to create record batch for traces: {:?}", e),
+            }
+        }
+
+        // Flush Container Output
+        if !self.container_output_buffer.is_empty() {
+            let count = self.container_output_buffer.len();
+            let old_buffer = std::mem::replace(
+                &mut self.container_output_buffer,
+                ContainerOutputBuffer::new(self.buffer_limit * 10),
+            );
+
+            match old_buffer.into_record_batch() {
+                Ok(batch) => {
+                    if let Err(e) = self
+                        .write_to_delta(
+                            &self.config.table_uri_container_output,
+                            batch,
+                            TableType::ContainerOutput,
+                        )
+                        .await
+                    {
+                        error!(
+                            "Failed to write container output events to Delta Lake: {:?}",
+                            e
+                        );
+                    } else {
+                        info!("Flushed {} container output events to Delta Lake", count);
+                    }
+                }
+                Err(e) => error!(
+                    "Failed to create record batch for container output: {:?}",
+                    e
+                ),
             }
         }
 
@@ -137,17 +242,17 @@ impl TelemetryService {
         &self,
         table_uri: &str,
         batch: arrow::record_batch::RecordBatch,
-        is_deployments: bool,
+        table_type: TableType,
     ) -> Result<(), DeltaTableError> {
         let table = match deltalake::open_table(table_uri).await {
             Ok(table) => table,
-            Err(DeltaTableError::NotATable(_)) => {
-                if is_deployments {
-                    create_deployments_table(table_uri).await?
-                } else {
-                    create_status_table(table_uri).await?
-                }
-            }
+            Err(DeltaTableError::NotATable(_)) => match table_type {
+                TableType::Deployments => create_deployments_table(table_uri).await?,
+                TableType::Status => create_status_table(table_uri).await?,
+                TableType::Logs => create_logs_table(table_uri).await?,
+                TableType::Traces => create_traces_table(table_uri).await?,
+                TableType::ContainerOutput => create_container_output_table(table_uri).await?,
+            },
             Err(e) => return Err(e),
         };
 
@@ -157,4 +262,12 @@ impl TelemetryService {
             .await?;
         Ok(())
     }
+}
+
+enum TableType {
+    Deployments,
+    Status,
+    Logs,
+    Traces,
+    ContainerOutput,
 }

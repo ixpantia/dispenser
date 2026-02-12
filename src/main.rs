@@ -5,9 +5,11 @@ use crate::{
     cli::Commands,
     proxy::{acme, run_dummy_proxy, run_proxy, ProxySignals},
     service::{
+        file::TelemetryConfig,
         manager::{ServiceMangerConfig, ServicesManager},
         vars::ServiceConfigError,
     },
+    telemetry::{TelemetryClient, TelemetryService},
 };
 
 mod cli;
@@ -81,31 +83,7 @@ async fn main() -> ExitCode {
     };
 
     let telemetry_client =
-        if let Some(telemetry_config) = &service_manager_config.entrypoint_file.telemetry {
-            if telemetry_config.enabled {
-                let (tx, rx) = tokio::sync::mpsc::channel(10000);
-                let config = telemetry_config.clone();
-
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(2)
-                        .enable_all()
-                        .build()
-                        .expect("Failed to build telemetry runtime");
-
-                    rt.block_on(async {
-                        let service = crate::telemetry::TelemetryService::new(config, rx);
-                        service.run().await;
-                    });
-                });
-
-                Some(crate::telemetry::TelemetryClient::new(tx))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        init_telemetry(service_manager_config.entrypoint_file.telemetry.as_ref());
 
     let manager =
         match ServicesManager::from_config(service_manager_config, None, telemetry_client.clone())
@@ -225,4 +203,38 @@ async fn main() -> ExitCode {
             }
         }
     }
+}
+
+fn init_telemetry(config: Option<&TelemetryConfig>) -> Option<TelemetryClient> {
+    let telemetry_config = config?;
+    if !telemetry_config.enabled {
+        return None;
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel(10000);
+    let config = telemetry_config.clone();
+
+    // Run ingestion service on main tokio runtime
+    let tx_ingestion = tx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::telemetry::ingestion::start_ingestion_service(tx_ingestion).await {
+            log::error!("OTLP ingestion service failed: {}", e);
+        }
+    });
+
+    // Telemetry Service runs in its own thread/runtime for Delta Lake operations
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("Failed to build telemetry runtime");
+
+        rt.block_on(async {
+            let service = TelemetryService::new(config, rx);
+            service.run().await;
+        });
+    });
+
+    Some(TelemetryClient::new(tx))
 }
