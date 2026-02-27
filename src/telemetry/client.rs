@@ -1,18 +1,24 @@
-use super::events::{ContainerStatusEvent, DeploymentEvent, DispenserEvent};
+use super::events::{ContainerOutputEvent, ContainerStatusEvent, DeploymentEvent, DispenserEvent};
 use super::types::{ContainerState, HealthStatus, TriggerType};
 use crate::service::instance::ServiceInstance;
 use log::error;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct TelemetryClient {
     tx: Sender<DispenserEvent>,
+    container_output_sequence: Arc<AtomicI64>,
 }
 
 impl TelemetryClient {
     pub fn new(tx: Sender<DispenserEvent>) -> Self {
-        Self { tx }
+        Self {
+            tx,
+            container_output_sequence: Arc::new(AtomicI64::new(0)),
+        }
     }
 
     pub fn track_deployment(
@@ -85,6 +91,32 @@ impl TelemetryClient {
         };
 
         self.send(DispenserEvent::ContainerStatus(Box::new(event)));
+    }
+
+    pub fn track_container_output(
+        &self,
+        service_name: String,
+        container_id: String,
+        stream: String,
+        message: String,
+    ) {
+        let now = chrono::Utc::now();
+        let timestamp = now.timestamp_micros();
+
+        let sequence = self
+            .container_output_sequence
+            .fetch_add(1, Ordering::SeqCst);
+
+        let event = ContainerOutputEvent {
+            timestamp,
+            service: service_name,
+            container_id,
+            stream,
+            message,
+            sequence,
+        };
+
+        self.send(DispenserEvent::ContainerOutput(event));
     }
 
     fn send(&self, event: DispenserEvent) {
