@@ -36,5 +36,5 @@ bump NEW_VERSION:
   sed -i '' 's/^version = ".*"/version = "{{NEW_VERSION}}"/' Cargo.toml
   # Update Documentation (URLs and filenames)
   sed -i '' -E 's/v[0-9]+\.[0-9]+\.[0-9]+/v{{NEW_VERSION}}/g' README.md INSTALL*.md
-  sed -i '' -E 's/dispenser-[0-9]+\.[0-9]+/dispenser-{{NEW_VERSION}}/g' README.md INSTALL*.md
+  sed -i '' -E 's/dispenser-[0-9]+\.[0-9]+\.[0-9]+/dispenser-{{NEW_VERSION}}/g' README.md INSTALL*.md
   @echo "Done. Don't forget to commit and tag!"
