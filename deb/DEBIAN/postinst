@@ -17,6 +17,9 @@ if [ ! -f /opt/dispenser/dispenser.toml ]; then
     chown dispenser:dispenser /opt/dispenser/dispenser.toml
 fi
 
+# Allow dispenser to bind to ports 80 and 443
+setcap 'cap_net_bind_service=+ep' /usr/local/bin/dispenser || true
+
 # Restart the service on upgrade
 if [ "$1" = "configure" ]; then
     systemctl daemon-reload || true

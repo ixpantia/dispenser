@@ -3,4 +3,4 @@ Version: VERSION_PLACEHOLDER
 Maintainer: ixpantia S.A.
 Architecture: amd64
 Description: Continously Deploy Containerized Services
-Depends: docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin, gnupg2, pass
+Depends: docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin, gnupg2, pass, libcap2-bin

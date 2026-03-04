@@ -5,7 +5,7 @@ Summary: Continously Deploy Containerized Services
 License: see /usr/share/doc/dispenser/copyright
 Distribution: Debian
 Group: Converted/unknown
-Requires: docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin, gnupg2, pass
+Requires: docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin, gnupg2, pass, libcap
 
 
 
@@ -27,6 +27,9 @@ if [ ! -f /opt/dispenser/dispenser.toml ]; then
     echo "delay=60 # Will watch for updates every 60 seconds" >> /opt/dispenser/dispenser.toml
     chown dispenser:dispenser /opt/dispenser/dispenser.toml
 fi
+
+# Allow dispenser to bind to low ports
+setcap 'cap_net_bind_service=+ep' /usr/local/bin/dispenser || true
 
 # Restart the service on upgrade
 systemctl daemon-reload || true
