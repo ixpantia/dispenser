@@ -2,6 +2,7 @@ use minijinja::Environment;
 use serde::{Deserialize, Serialize};
 use std::string::FromUtf8Error;
 use std::{collections::HashMap, path::Path, path::PathBuf};
+use tokio::task::JoinSet;
 
 use crate::secrets;
 
@@ -66,8 +67,44 @@ pub struct ServiceVarsMaterialized {
 
 impl ServiceVarsMaterialized {
     pub async fn try_init() -> Result<Self, ServiceConfigError> {
-        let vars_raw = ServiceVars::try_init().await?;
-        vars_raw.materialize().await
+        let main_vars = ServiceVars::read_main_dispenser_vars().await?;
+        let main_vars = main_vars.materialize().await?;
+
+        let mut vars_futures = JoinSet::new();
+
+        let vars_files = list_vars_files().await;
+        for vars_file in vars_files {
+            match tokio::fs::read_to_string(&vars_file).await {
+                Ok(this_vars) => {
+                    let this_vars = render_template(&this_vars, &main_vars)
+                        .map_err(|e| ServiceConfigError::Template((vars_file.clone(), e)))?;
+                    match ServiceVars::try_init_from_string(&this_vars) {
+                        Ok(this_vars) => {
+                            vars_futures.spawn(this_vars.materialize());
+                        }
+                        Err(e) => log::error!("Error parsing vars file: {e}"),
+                    }
+                }
+                Err(e) => log::error!("Error reading vars file: {e}"),
+            }
+        }
+
+        let mut vars = vec![main_vars];
+
+        while let Some(Ok(vars_result)) = vars_futures.join_next().await {
+            vars.push(vars_result?);
+        }
+
+        Ok(Self::combine(vars))
+    }
+    fn combine(vars: Vec<Self>) -> Self {
+        let mut combined_inner = HashMap::new();
+        vars.into_iter().for_each(|var_set| {
+            combined_inner.extend(var_set.inner);
+        });
+        Self {
+            inner: combined_inner,
+        }
     }
 }
 
@@ -99,7 +136,7 @@ async fn list_vars_files() -> Vec<PathBuf> {
             if let Ok(file_type) = entry.file_type().await {
                 if file_type.is_file() {
                     if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                        if file_name == "dispenser.vars" || file_name.ends_with(".dispenser.vars") {
+                        if file_name.ends_with(".dispenser.vars") {
                             files.push(path);
                         }
                     }
@@ -117,30 +154,31 @@ impl ServiceVars {
         Ok(toml::from_str(val)?)
     }
 
-    fn combine(vars: Vec<Self>) -> Self {
-        let mut combined_inner = HashMap::new();
-        vars.into_iter().for_each(|var_set| {
-            combined_inner.extend(var_set.inner);
-        });
-        Self {
-            inner: combined_inner,
-        }
-    }
+    async fn read_main_dispenser_vars() -> Result<Self, ServiceConfigError> {
+        let cli_args = crate::cli::get_cli_args();
 
-    async fn try_init() -> Result<Self, ServiceConfigError> {
-        let mut vars = Vec::new();
-        let vars_files = list_vars_files().await;
-        for vars_file in vars_files {
-            match tokio::fs::read_to_string(&vars_file).await {
-                Ok(this_vars) => match Self::try_init_from_string(&this_vars) {
-                    Ok(this_vars) => vars.push(this_vars),
-                    Err(e) => log::error!("Error parsing vars file: {e}"),
-                },
-                Err(e) => log::error!("Error reading vars file: {e}"),
+        let search_dir = cli_args.config.parent().map_or(Path::new("."), |p| {
+            if p.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                p
+            }
+        });
+
+        let main_vars_path = search_dir.join("dispenser.vars");
+
+        match tokio::fs::read_to_string(&main_vars_path).await {
+            Ok(content) => Self::try_init_from_string(&content),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    // If the file doesn't exist, it's not an error, just return an empty ServiceVars
+                    Ok(ServiceVars::default())
+                } else {
+                    // Other IO errors should be propagated
+                    Err(ServiceConfigError::Io(e))
+                }
             }
         }
-
-        Ok(Self::combine(vars))
     }
 }
 

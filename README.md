@@ -215,6 +215,10 @@ In this example, the service defined in the `backup-service` directory will only
 
 Dispenser supports using variables in your configuration files via `dispenser.vars` or any file ending in `.dispenser.vars`. These files allow you to define values that can be reused inside `dispenser.toml` and `service.toml` files using `${VARIABLE}` syntax.
 
+**Load Order:** The main `dispenser.vars` file is always loaded first. This means variables defined in `dispenser.vars` can be used to template all other `*.dispenser.vars` files.
+
+For a comprehensive guide on using variables, templating, and advanced features, see the [Variables documentation](VARIABLES.md).
+
 **Note:** While Dispenser uses the `${}` syntax similar to Docker Compose, it does not support all [Docker Compose interpolation features](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/) (such as default values `:-` or error messages `:?`).
 
 Variables defined in these files are substituted directly into your configuration files during loading.
