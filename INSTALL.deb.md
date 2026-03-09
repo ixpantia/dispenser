@@ -21,7 +21,7 @@ wget ...
 
 
 ```sh
-sudo apt install ./dispenser-0.13.1-0.x86_64.deb
+sudo apt install ./dispenser-0.13.2-0.x86_64.deb
 ```
 
 You can validate that it was successfully installed by switching to the
