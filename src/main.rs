@@ -52,6 +52,10 @@ async fn main() -> ExitCode {
         }
     }
 
+    deltalake::aws::register_handlers(None);
+    deltalake::azure::register_handlers(None);
+    deltalake::gcp::register_handlers(None);
+
     log::info!("Dispenser running with PID: {}", std::process::id());
 
     if let Err(err) = tokio::fs::write(&args.pid_file, std::process::id().to_string()).await {
