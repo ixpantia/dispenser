@@ -22,13 +22,9 @@ Telemetry is disabled by default. To enable it, add a `[telemetry]` section to y
 [telemetry]
 enabled = true
 
-# URIs for the Delta tables. 
+# The base URI for the Delta tables. Sub-tables (deployments, status, logs, traces, container-output) will be created under this directory.
 # Supported schemes: file://, s3://, gs://, az://, adls://
-table_uri_deployments = "s3://my-data-lake/dispenser/deployments"
-table_uri_status = "s3://my-data-lake/dispenser/status"
-table_uri_logs = "s3://my-data-lake/dispenser/logs"
-table_uri_traces = "s3://my-data-lake/dispenser/traces"
-table_uri_container_output = "s3://my-data-lake/dispenser/container-output"
+base_uri = "s3://my-data-lake/dispenser"
 
 # Optional: How often to sample container status (default: 60 seconds)
 status_interval = 60
@@ -46,7 +42,7 @@ Dispenser uses the `deltalake` Rust crate, which supports multiple storage backe
 Writes to a local directory. Useful for development or single-node setups where an external agent (like Fluentbit) ships the logs.
 
 ```toml
-table_uri_deployments = "file:///var/log/dispenser/deployments"
+base_uri = "file:///var/log/dispenser"
 ```
 
 #### 2. AWS S3 (`s3://`)

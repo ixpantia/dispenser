@@ -64,14 +64,28 @@ pub struct CertbotSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TelemetryConfig {
     pub enabled: bool,
-    pub table_uri_deployments: String,
-    pub table_uri_status: String,
-    pub table_uri_logs: String,
-    pub table_uri_traces: String,
-    pub table_uri_container_output: String,
+    pub base_uri: String,
     pub buffer_size: Option<usize>,
     #[serde(default = "default_status_interval")]
     pub status_interval: u64,
+}
+
+impl TelemetryConfig {
+    pub fn table_uri_deployments(&self) -> String {
+        format!("{}/deployments", self.base_uri.trim_end_matches('/'))
+    }
+    pub fn table_uri_status(&self) -> String {
+        format!("{}/status", self.base_uri.trim_end_matches('/'))
+    }
+    pub fn table_uri_logs(&self) -> String {
+        format!("{}/logs", self.base_uri.trim_end_matches('/'))
+    }
+    pub fn table_uri_traces(&self) -> String {
+        format!("{}/traces", self.base_uri.trim_end_matches('/'))
+    }
+    pub fn table_uri_container_output(&self) -> String {
+        format!("{}/container-output", self.base_uri.trim_end_matches('/'))
+    }
 }
 
 fn default_status_interval() -> u64 {

@@ -115,7 +115,7 @@ impl TelemetryService {
                 Ok(batch) => {
                     if let Err(e) = self
                         .write_to_delta(
-                            &self.config.table_uri_deployments,
+                            &self.config.table_uri_deployments(),
                             batch,
                             TableType::Deployments,
                         )
@@ -141,7 +141,7 @@ impl TelemetryService {
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_status, batch, TableType::Status)
+                        .write_to_delta(&self.config.table_uri_status(), batch, TableType::Status)
                         .await
                     {
                         error!("Failed to write status events to Delta Lake: {:?}", e);
@@ -164,7 +164,7 @@ impl TelemetryService {
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_logs, batch, TableType::Logs)
+                        .write_to_delta(&self.config.table_uri_logs(), batch, TableType::Logs)
                         .await
                     {
                         error!("Failed to write log events to Delta Lake: {:?}", e);
@@ -187,7 +187,7 @@ impl TelemetryService {
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_traces, batch, TableType::Traces)
+                        .write_to_delta(&self.config.table_uri_traces(), batch, TableType::Traces)
                         .await
                     {
                         error!("Failed to write trace events to Delta Lake: {:?}", e);
@@ -211,7 +211,7 @@ impl TelemetryService {
                 Ok(batch) => {
                     if let Err(e) = self
                         .write_to_delta(
-                            &self.config.table_uri_container_output,
+                            &self.config.table_uri_container_output(),
                             batch,
                             TableType::ContainerOutput,
                         )

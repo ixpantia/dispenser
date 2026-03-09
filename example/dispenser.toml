@@ -6,11 +6,7 @@ enabled = true
 
 [telemetry]
 enabled = true
-table_uri_deployments = "telem/deployments"
-table_uri_status = "telem/status"
-table_uri_logs = "telem/logs"
-table_uri_container_output = "telem/container_out"
-table_uri_traces = "telem/traces"
+base_uri = "telem"
 
 [[service]]
 path = "service1"
