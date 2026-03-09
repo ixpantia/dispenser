@@ -342,6 +342,7 @@ impl ServicesManager {
                     cron_watcher,
                     image_watcher,
                     telemetry,
+                    log_watcher: Arc::new(tokio::sync::Mutex::new(None)),
                 };
 
                 (service_name, Arc::new(instance))
@@ -805,6 +806,7 @@ mod tests {
                 cron_watcher: None,
                 image_watcher: None,
                 telemetry: None,
+                log_watcher: Arc::new(tokio::sync::Mutex::new(None)),
             }));
         }
 
