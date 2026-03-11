@@ -177,3 +177,84 @@ pub fn parse_image_reference(image: &str) -> (&str, &str) {
     // No tag specified, use "latest"
     (image, "latest")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_registry() {
+        assert_eq!(extract_registry("ubuntu"), "docker.io");
+        assert_eq!(extract_registry("ubuntu:latest"), "docker.io");
+        assert_eq!(extract_registry("docker.io/library/ubuntu"), "docker.io");
+        assert_eq!(extract_registry("ghcr.io/user/repo"), "ghcr.io");
+        assert_eq!(
+            extract_registry("localhost:5000/my-image"),
+            "localhost:5000"
+        );
+        assert_eq!(
+            extract_registry("myregistry.local:5000/image"),
+            "myregistry.local:5000"
+        );
+        assert_eq!(extract_registry("quay.io/coreos/etcd"), "quay.io");
+    }
+
+    #[test]
+    fn test_parse_image_reference() {
+        // Tag references
+        assert_eq!(parse_image_reference("ubuntu"), ("ubuntu", "latest"));
+        assert_eq!(parse_image_reference("ubuntu:20.04"), ("ubuntu", "20.04"));
+        assert_eq!(
+            parse_image_reference("ghcr.io/user/repo:tag"),
+            ("ghcr.io/user/repo", "tag")
+        );
+
+        // Port numbers in registry
+        assert_eq!(
+            parse_image_reference("localhost:5000/my-image"),
+            ("localhost:5000/my-image", "latest")
+        );
+        assert_eq!(
+            parse_image_reference("localhost:5000/my-image:1.0"),
+            ("localhost:5000/my-image", "1.0")
+        );
+
+        // Digest references
+        assert_eq!(
+            parse_image_reference(
+                "ubuntu@sha256:45b23dee08af5e43a7fea6c4cf9c25ccf269ee113168c19722f87876677c5cb2"
+            ),
+            (
+                "ubuntu",
+                "@sha256:45b23dee08af5e43a7fea6c4cf9c25ccf269ee113168c19722f87876677c5cb2"
+            )
+        );
+        assert_eq!(
+            parse_image_reference("ghcr.io/user/repo@sha256:12345"),
+            ("ghcr.io/user/repo", "@sha256:12345")
+        );
+        assert_eq!(
+            parse_image_reference("localhost:5000/image@sha256:123"),
+            ("localhost:5000/image", "@sha256:123")
+        );
+    }
+
+    #[test]
+    fn test_get_registry_keys() {
+        // Standard registry
+        let keys = get_registry_keys("ghcr.io");
+        assert_eq!(keys, vec!["ghcr.io", "https://ghcr.io"]);
+
+        // Http registry
+        let keys = get_registry_keys("http://localhost:5000");
+        assert_eq!(keys, vec!["http://localhost:5000"]);
+
+        // Docker hub
+        let keys = get_registry_keys("docker.io");
+        assert!(keys.contains(&"docker.io".to_string()));
+        assert!(keys.contains(&"https://docker.io".to_string()));
+        assert!(keys.contains(&"https://index.docker.io/v1/".to_string()));
+        assert!(keys.contains(&"index.docker.io/v1/".to_string()));
+        assert!(keys.contains(&"https://registry-1.docker.io/v2/".to_string()));
+    }
+}

@@ -1,5 +1,6 @@
 mod container_output;
 mod deployments;
+pub mod json;
 mod logs;
 mod status;
 mod traces;

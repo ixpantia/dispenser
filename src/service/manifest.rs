@@ -168,3 +168,43 @@ async fn get_latest_digest(image: &str) -> Result<Sha256> {
         "No digest found in inspect output".to_string(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sha256_debug_fmt() {
+        let mut inner = [0u8; 64];
+        let hash_str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        inner.copy_from_slice(hash_str.as_bytes());
+        let sha = Sha256 { inner };
+
+        let debug_str = format!("{:?}", sha);
+        assert_eq!(
+            debug_str,
+            "Sha256(sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)"
+        );
+    }
+
+    #[test]
+    fn test_image_watcher_partial_eq() {
+        let watcher1 = ImageWatcher {
+            image: "ubuntu:latest".into(),
+            last_digest: Mutex::new(None),
+        };
+
+        let watcher2 = ImageWatcher {
+            image: "ubuntu:latest".into(),
+            last_digest: Mutex::new(Some(Sha256 { inner: [0u8; 64] })),
+        };
+
+        let watcher3 = ImageWatcher {
+            image: "alpine:latest".into(),
+            last_digest: Mutex::new(None),
+        };
+
+        assert_eq!(watcher1, watcher2);
+        assert_ne!(watcher1, watcher3);
+    }
+}

@@ -56,3 +56,20 @@ static ARGS: OnceLock<Args> = OnceLock::new();
 pub fn get_cli_args() -> &'static Args {
     ARGS.get_or_init(Args::parse)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_signal_conversion() {
+        assert_eq!(
+            nix::sys::signal::Signal::from(Signal::Reload),
+            nix::sys::signal::Signal::SIGHUP
+        );
+        assert_eq!(
+            nix::sys::signal::Signal::from(Signal::Stop),
+            nix::sys::signal::Signal::SIGINT
+        );
+    }
+}

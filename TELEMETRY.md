@@ -75,13 +75,14 @@ Dispenser supports several authentication methods via environment variables:
 Dispenser acts as a sidecar host for your services. When telemetry is enabled, Dispenser starts an **Ingestion Service** listening on.
 
 *   **Endpoint**: `http://0.0.0.0:4318`
-*   **Protocol**: OTLP/HTTP (JSON)
+*   **Protocol**: OTLP/HTTP (Protobuf with JSON fallback)
 
 ### Automatic Environment Variables
 
 Dispenser automatically injects the following environment variables into all managed containers to simplify instrumentation:
 
 *   `OTEL_EXPORTER_OTLP_ENDPOINT="http://host.docker.internal:4318"`
+*   `OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"`
 *   `OTEL_SERVICE_NAME="{service_name}"` (The name from your `service.toml`)
 
 Standard OTel SDKs will automatically detect these variables and begin shipping logs and traces to Dispenser without further configuration.
@@ -146,8 +147,8 @@ Stores structured logs emitted by applications via OTel.
 | `body` | `STRING` | The log message. |
 | `trace_id` | `STRING` | Associated trace ID (hex). |
 | `span_id` | `STRING` | Associated span ID (hex). |
-| `attributes` | `MAP<STRING, STRING>` | Flattened log attributes. |
-| `resource` | `MAP<STRING, STRING>` | Resource attributes (pod, node, etc). |
+| `attributes` | `STRING` | JSON string of log attributes. |
+| `resource` | `STRING` | JSON string of resource attributes (pod, node, etc). |
 
 ### Traces Table (`dispenser-traces`)
 
@@ -167,7 +168,8 @@ Stores distributed tracing spans.
 | `status_code` | `STRING` | OK, ERROR. |
 | `status_message` | `STRING` | Error description. |
 | `service` | `STRING` | Service name. |
-| `attributes` | `MAP<STRING, STRING>` | Span attributes. |
+| `attributes` | `STRING` | JSON string of span attributes. |
+| `events` | `ARRAY<STRUCT>` | Span events with `timestamp`, `name`, and `attributes`. |
 
 ### Container Output Table (`dispenser-container-output`)
 

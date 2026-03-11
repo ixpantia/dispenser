@@ -1,5 +1,5 @@
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use deltalake::kernel::{DataType as DeltaDataType, MapType, PrimitiveType, StructField};
+use deltalake::kernel::{DataType as DeltaDataType, PrimitiveType, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
 use deltalake::{DeltaTable, DeltaTableError, TableProperty};
@@ -40,20 +40,12 @@ pub async fn create_logs_table(table_uri: &str) -> Result<DeltaTable, DeltaTable
         ),
         StructField::new(
             "attributes",
-            DeltaDataType::Map(Box::new(MapType::new(
-                DeltaDataType::Primitive(PrimitiveType::String),
-                DeltaDataType::Primitive(PrimitiveType::String),
-                true,
-            ))),
+            DeltaDataType::Primitive(PrimitiveType::String),
             true,
         ),
         StructField::new(
             "resource",
-            DeltaDataType::Map(Box::new(MapType::new(
-                DeltaDataType::Primitive(PrimitiveType::String),
-                DeltaDataType::Primitive(PrimitiveType::String),
-                true,
-            ))),
+            DeltaDataType::Primitive(PrimitiveType::String),
             true,
         ),
     ];
@@ -88,41 +80,7 @@ pub fn logs_schema() -> Arc<Schema> {
         Field::new("body", DataType::Utf8, true),
         Field::new("trace_id", DataType::Utf8, true),
         Field::new("span_id", DataType::Utf8, true),
-        Field::new(
-            "attributes",
-            DataType::Map(
-                Arc::new(Field::new(
-                    "entries",
-                    DataType::Struct(
-                        vec![
-                            Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                )),
-                false,
-            ),
-            true,
-        ),
-        Field::new(
-            "resource",
-            DataType::Map(
-                Arc::new(Field::new(
-                    "entries",
-                    DataType::Struct(
-                        vec![
-                            Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                )),
-                false,
-            ),
-            true,
-        ),
+        Field::new("attributes", DataType::Utf8, true),
+        Field::new("resource", DataType::Utf8, true),
     ]))
 }

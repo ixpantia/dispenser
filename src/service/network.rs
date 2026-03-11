@@ -267,3 +267,52 @@ pub async fn remove_default_network() -> Result<(), ServiceConfigError> {
     let default_network = NetworkInstance::default_network();
     default_network.remove_network().await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_network() {
+        let network = NetworkInstance::default_network();
+
+        assert_eq!(network.name, DEFAULT_NETWORK_NAME);
+        assert_eq!(network.driver, NetworkDriver::Bridge);
+        assert!(!network.external);
+        assert!(!network.internal);
+        assert!(network.attachable);
+        assert_eq!(network.subnet, Some(DEFAULT_NETWORK_SUBNET.to_string()));
+        assert_eq!(network.gateway, Some(DEFAULT_NETWORK_GATEWAY.to_string()));
+
+        assert_eq!(
+            network.labels.get("managed-by").map(|s| s.as_str()),
+            Some("dispenser")
+        );
+    }
+
+    #[test]
+    fn test_network_instance_from_declaration() {
+        let mut labels = HashMap::new();
+        labels.insert("custom-label".to_string(), "value".to_string());
+
+        let declaration = NetworkDeclarationEntry {
+            name: "test-network".to_string(),
+            driver: NetworkDriver::Overlay,
+            external: true,
+            internal: true,
+            attachable: false,
+            labels: labels.clone(),
+        };
+
+        let network = NetworkInstance::from(declaration);
+
+        assert_eq!(network.name, "test-network");
+        assert_eq!(network.driver, NetworkDriver::Overlay);
+        assert!(network.external);
+        assert!(network.internal);
+        assert!(!network.attachable);
+        assert_eq!(network.labels, labels);
+        assert_eq!(network.subnet, None);
+        assert_eq!(network.gateway, None);
+    }
+}

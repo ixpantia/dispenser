@@ -43,6 +43,26 @@ impl TelemetryService {
 
     pub async fn run(mut self) {
         info!("Telemetry service started");
+
+        // Ensure tables exist on startup
+        if let Err(e) = create_deployments_table(&self.config.table_uri_deployments()).await {
+            error!("Failed to initialize deployments table: {}", e);
+        }
+        if let Err(e) = create_status_table(&self.config.table_uri_status()).await {
+            error!("Failed to initialize status table: {}", e);
+        }
+        if let Err(e) = create_logs_table(&self.config.table_uri_logs()).await {
+            error!("Failed to initialize logs table: {}", e);
+        }
+        if let Err(e) = create_traces_table(&self.config.table_uri_traces()).await {
+            error!("Failed to initialize traces table: {}", e);
+        }
+        if let Err(e) =
+            create_container_output_table(&self.config.table_uri_container_output()).await
+        {
+            error!("Failed to initialize container output table: {}", e);
+        }
+
         // Start with a tick so we don't wait 5 mins for the first check if needed,
         // but actually we only want to flush if time passes.
         // interval.tick() completes immediately the first time.
@@ -246,13 +266,15 @@ impl TelemetryService {
     ) -> Result<(), DeltaTableError> {
         let table = match deltalake::open_table(table_uri).await {
             Ok(table) => table,
-            Err(DeltaTableError::NotATable(_)) => match table_type {
-                TableType::Deployments => create_deployments_table(table_uri).await?,
-                TableType::Status => create_status_table(table_uri).await?,
-                TableType::Logs => create_logs_table(table_uri).await?,
-                TableType::Traces => create_traces_table(table_uri).await?,
-                TableType::ContainerOutput => create_container_output_table(table_uri).await?,
-            },
+            Err(DeltaTableError::NotATable(_)) | Err(DeltaTableError::InvalidTableLocation(_)) => {
+                match table_type {
+                    TableType::Deployments => create_deployments_table(table_uri).await?,
+                    TableType::Status => create_status_table(table_uri).await?,
+                    TableType::Logs => create_logs_table(table_uri).await?,
+                    TableType::Traces => create_traces_table(table_uri).await?,
+                    TableType::ContainerOutput => create_container_output_table(table_uri).await?,
+                }
+            }
             Err(e) => return Err(e),
         };
 

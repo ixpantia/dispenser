@@ -416,7 +416,7 @@ impl ServiceInstance {
                 env.push("OTEL_METRICS_EXPORTER=http".to_string());
             }
             if !self.config.env.contains_key("OTEL_EXPORTER_OTLP_PROTOCOL") {
-                env.push("OTEL_EXPORTER_OTLP_PROTOCOL=http/json".to_string());
+                env.push("OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf".to_string());
             }
         }
 
@@ -811,4 +811,39 @@ fn parse_memory_limit(limit: &str) -> i64 {
     };
 
     num_str.parse::<i64>().unwrap_or(0) * multiplier
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_memory_limit() {
+        // Test gigabytes
+        assert_eq!(parse_memory_limit("2g"), 2 * 1024 * 1024 * 1024);
+        assert_eq!(parse_memory_limit("2G"), 2 * 1024 * 1024 * 1024);
+
+        // Test megabytes
+        assert_eq!(parse_memory_limit("512m"), 512 * 1024 * 1024);
+        assert_eq!(parse_memory_limit("512M"), 512 * 1024 * 1024);
+
+        // Test kilobytes
+        assert_eq!(parse_memory_limit("1024k"), 1024 * 1024);
+        assert_eq!(parse_memory_limit("1024K"), 1024 * 1024);
+
+        // Test bytes
+        assert_eq!(parse_memory_limit("100b"), 100);
+        assert_eq!(parse_memory_limit("100B"), 100);
+
+        // Test without suffix
+        assert_eq!(parse_memory_limit("1000"), 1000);
+
+        // Test with spaces
+        assert_eq!(parse_memory_limit("  10m  "), 10 * 1024 * 1024);
+
+        // Test invalid input gracefully falls back to 0
+        assert_eq!(parse_memory_limit("invalid"), 0);
+        assert_eq!(parse_memory_limit(""), 0);
+        assert_eq!(parse_memory_limit("g"), 0);
+    }
 }

@@ -368,3 +368,83 @@ pub struct ServiceEntry {
     #[serde(default)]
     pub restart: Restart,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_volume_source_deserialize() {
+        let path_json = r#""/absolute/path""#;
+        let source: VolumeSource = serde_json::from_str(path_json).unwrap();
+        assert_eq!(source, VolumeSource::Path(PathBuf::from("/absolute/path")));
+
+        let rel_path_json = r#""./relative/path""#;
+        let source: VolumeSource = serde_json::from_str(rel_path_json).unwrap();
+        assert_eq!(source, VolumeSource::Path(PathBuf::from("./relative/path")));
+
+        let name_json = r#""my_volume""#;
+        let source: VolumeSource = serde_json::from_str(name_json).unwrap();
+        assert_eq!(source, VolumeSource::Name("my_volume".to_string()));
+    }
+
+    #[test]
+    fn test_volume_entry_normalized_source() {
+        let wd = Path::new("/tmp");
+
+        let entry_abs = VolumeEntry {
+            source: VolumeSource::Path(PathBuf::from("/absolute/path")),
+            target: "/target".to_string(),
+            readonly: false,
+        };
+        assert_eq!(entry_abs.normalized_source(wd).unwrap(), "/absolute/path");
+
+        let entry_rel = VolumeEntry {
+            source: VolumeSource::Path(PathBuf::from("relative/path")),
+            target: "/target".to_string(),
+            readonly: false,
+        };
+        let norm = entry_rel.normalized_source(wd).unwrap();
+        assert!(norm.ends_with("relative/path"));
+
+        let entry_name = VolumeEntry {
+            source: VolumeSource::Name("my_volume".to_string()),
+            target: "/target".to_string(),
+            readonly: false,
+        };
+        assert_eq!(entry_name.normalized_source(wd).unwrap(), "my_volume");
+    }
+
+    #[test]
+    fn test_global_proxy_config_default() {
+        let config = GlobalProxyConfig::default();
+        assert_eq!(config.enabled, true);
+        assert_eq!(config.strategy, ProxyStrategy::HttpsOnly);
+        assert_eq!(config.trust_forwarded_headers, false);
+    }
+
+    #[test]
+    fn test_proxy_strategy_default() {
+        assert_eq!(ProxyStrategy::default(), ProxyStrategy::HttpsOnly);
+    }
+
+    #[test]
+    fn test_restart_default() {
+        assert_eq!(Restart::default(), Restart::No);
+    }
+
+    #[test]
+    fn test_initialize_default() {
+        assert_eq!(Initialize::default(), Initialize::Immediately);
+    }
+
+    #[test]
+    fn test_pull_options_default() {
+        assert_eq!(PullOptions::default(), PullOptions::OnStartup);
+    }
+
+    #[test]
+    fn test_network_driver_default() {
+        assert_eq!(NetworkDriver::default(), NetworkDriver::Bridge);
+    }
+}

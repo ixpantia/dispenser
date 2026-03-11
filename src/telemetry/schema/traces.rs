@@ -1,6 +1,6 @@
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use deltalake::kernel::{
-    ArrayType, DataType as DeltaDataType, MapType, PrimitiveType, StructField, StructType,
+    ArrayType, DataType as DeltaDataType, PrimitiveType, StructField, StructType,
 };
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
@@ -67,11 +67,7 @@ pub async fn create_traces_table(table_uri: &str) -> Result<DeltaTable, DeltaTab
         ),
         StructField::new(
             "attributes",
-            DeltaDataType::Map(Box::new(MapType::new(
-                DeltaDataType::Primitive(PrimitiveType::String),
-                DeltaDataType::Primitive(PrimitiveType::String),
-                true,
-            ))),
+            DeltaDataType::Primitive(PrimitiveType::String),
             true,
         ),
         StructField::new(
@@ -90,11 +86,7 @@ pub async fn create_traces_table(table_uri: &str) -> Result<DeltaTable, DeltaTab
                     ),
                     StructField::new(
                         "attributes",
-                        DeltaDataType::Map(Box::new(MapType::new(
-                            DeltaDataType::Primitive(PrimitiveType::String),
-                            DeltaDataType::Primitive(PrimitiveType::String),
-                            true,
-                        ))),
+                        DeltaDataType::Primitive(PrimitiveType::String),
                         true,
                     ),
                 ]))),
@@ -143,24 +135,7 @@ pub fn traces_schema() -> Arc<Schema> {
         Field::new("status_code", DataType::Utf8, true),
         Field::new("status_message", DataType::Utf8, true),
         Field::new("service", DataType::Utf8, false),
-        Field::new(
-            "attributes",
-            DataType::Map(
-                Arc::new(Field::new(
-                    "entries",
-                    DataType::Struct(
-                        vec![
-                            Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                )),
-                false,
-            ),
-            true,
-        ),
+        Field::new("attributes", DataType::Utf8, true),
         Field::new(
             "events",
             DataType::List(Arc::new(Field::new(
@@ -173,24 +148,7 @@ pub fn traces_schema() -> Arc<Schema> {
                             false,
                         ),
                         Field::new("name", DataType::Utf8, false),
-                        Field::new(
-                            "attributes",
-                            DataType::Map(
-                                Arc::new(Field::new(
-                                    "entries",
-                                    DataType::Struct(
-                                        vec![
-                                            Field::new("key", DataType::Utf8, false),
-                                            Field::new("value", DataType::Utf8, true),
-                                        ]
-                                        .into(),
-                                    ),
-                                    false,
-                                )),
-                                false,
-                            ),
-                            true,
-                        ),
+                        Field::new("attributes", DataType::Utf8, true),
                     ]
                     .into(),
                 ),
