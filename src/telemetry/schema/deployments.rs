@@ -101,15 +101,17 @@ pub async fn create_deployments_table(table_uri: &str) -> Result<DeltaTable, Del
         .with_partition_columns(vec!["date"])
         .with_save_mode(SaveMode::Ignore)
         .with_configuration_property(
-            TableProperty::LogRetentionDuration,
-            Some("interval 1 hours"),
-        )
-        .with_configuration_property(
             TableProperty::DeletedFileRetentionDuration,
             Some("interval 7 days"),
         )
-        // 32MB target file size (good for streaming ingestion)
-        .with_configuration_property(TableProperty::TargetFileSize, Some("33554432"))
+        .with_configuration_property(
+            TableProperty::LogRetentionDuration,
+            Some("interval 1 hours"),
+        )
+        .with_configuration_property(TableProperty::AutoOptimizeAutoCompact, Some("true"))
+        .with_configuration_property(TableProperty::AutoOptimizeOptimizeWrite, Some("true"))
+        .with_configuration_property(TableProperty::CheckpointInterval, Some("20"))
+        .with_configuration_property(TableProperty::TargetFileSize, Some("128mb"))
         .await
 }
 
