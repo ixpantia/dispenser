@@ -35,7 +35,7 @@ uuid = { version = "1.10.0", features = ["v7", "serde"] }
 
 async-trait = "0.1.89"
 pingora = { version = "0.6.0", features = ["lb", "openssl"] }
-pingora-core = "0.6.0"
+pingora-core = "0.8.0"
 pingora-error = "0.6.0"
 pingora-http = "0.6.0"
 pingora-load-balancing = "0.6.0"
