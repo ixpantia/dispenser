@@ -103,7 +103,7 @@ pub async fn create_traces_table(table_uri: &str) -> Result<DeltaTable, DeltaTab
         .with_save_mode(SaveMode::Ignore)
         .with_configuration_property(
             TableProperty::LogRetentionDuration,
-            Some("interval 30 days"),
+            Some("interval 1 hours"),
         )
         .with_configuration_property(
             TableProperty::DeletedFileRetentionDuration,

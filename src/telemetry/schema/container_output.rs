@@ -45,10 +45,13 @@ pub async fn create_container_output_table(table_uri: &str) -> Result<DeltaTable
         .with_columns(columns)
         .with_partition_columns(vec!["date"])
         .with_save_mode(SaveMode::Ignore)
-        .with_configuration_property(TableProperty::LogRetentionDuration, Some("interval 7 days"))
+        .with_configuration_property(
+            TableProperty::LogRetentionDuration,
+            Some("interval 1 hours"),
+        )
         .with_configuration_property(
             TableProperty::DeletedFileRetentionDuration,
-            Some("interval 1 days"),
+            Some("interval 7 days"),
         )
         .with_configuration_property(TableProperty::TargetFileSize, Some("33554432"))
         .await
