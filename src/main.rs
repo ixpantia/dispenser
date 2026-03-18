@@ -21,6 +21,8 @@ mod telemetry;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    dotenv::dotenv().ok();
+
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
