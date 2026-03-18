@@ -49,22 +49,54 @@ struct CredentialHelperResponse {
 /// Get Docker credentials for a given registry from the Docker config file (~/.docker/config.json).
 /// This supports static auth strings, the global 'credsStore', and per-registry 'credHelpers'.
 pub async fn get_credentials(registry: &str) -> Option<DockerCredentials> {
-    let config_path = std::env::var("DOCKER_CONFIG")
+    let config_path = match std::env::var("DOCKER_CONFIG")
         .map(|p| std::path::PathBuf::from(p).join("config.json"))
         .or_else(|_| {
             std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".docker/config.json"))
-        })
-        .ok()?;
+        }) {
+        Ok(path) => path,
+        Err(e) => {
+            log::debug!("Could not determine Docker config path: {}", e);
+            return None;
+        }
+    };
 
-    let content = tokio::fs::read_to_string(config_path).await.ok()?;
-    let config: DockerConfig = serde_json::from_str(&content).ok()?;
+    let content = match tokio::fs::read_to_string(&config_path).await {
+        Ok(content) => content,
+        Err(e) => {
+            log::debug!(
+                "Could not read Docker config file at {:?}: {}",
+                config_path,
+                e
+            );
+            return None;
+        }
+    };
+
+    let config: DockerConfig = match serde_json::from_str(&content) {
+        Ok(config) => config,
+        Err(e) => {
+            log::error!("Failed to parse Docker config at {:?}: {}", config_path, e);
+            return None;
+        }
+    };
 
     // 1. Try Credential Helpers (Specific helper for registry)
     if let Some(helpers) = &config.cred_helpers {
         if let Some(helper_suffix) = helpers.get(registry) {
+            log::debug!(
+                "Found specific credHelper '{}' for registry '{}'",
+                helper_suffix,
+                registry
+            );
             if let Some(creds) = call_credential_helper(helper_suffix, registry).await {
                 return Some(creds);
             }
+            log::warn!(
+                "Credential helper '{}' failed to provide credentials for '{}'",
+                helper_suffix,
+                registry
+            );
         }
     }
 
@@ -74,6 +106,7 @@ pub async fn get_credentials(registry: &str) -> Option<DockerCredentials> {
         for key in keys_to_check {
             if let Some(auth_entry) = auths.get(&key) {
                 if let Some(auth) = &auth_entry.auth {
+                    log::debug!("Found static auth entry for registry key '{}'", key);
                     return Some(DockerCredentials {
                         auth: Some(auth.clone()),
                         ..Default::default()
@@ -85,11 +118,22 @@ pub async fn get_credentials(registry: &str) -> Option<DockerCredentials> {
 
     // 3. Try Global Credentials Store
     if let Some(helper_suffix) = &config.creds_store {
+        log::debug!(
+            "Found global credsStore '{}' for registry '{}'",
+            helper_suffix,
+            registry
+        );
         if let Some(creds) = call_credential_helper(helper_suffix, registry).await {
             return Some(creds);
         }
+        log::warn!(
+            "Global credsStore '{}' failed to provide credentials for '{}'",
+            helper_suffix,
+            registry
+        );
     }
 
+    log::debug!("No Docker credentials found for registry '{}'", registry);
     None
 }
 
