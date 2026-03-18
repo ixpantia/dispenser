@@ -4,6 +4,7 @@
 //! for interacting with Docker via the bollard API, including asynchronous
 //! credential support from the Docker CLI configuration.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bollard::auth::DockerCredentials;
 use bollard::Docker;
 use serde::Deserialize;
@@ -107,6 +108,21 @@ pub async fn get_credentials(registry: &str) -> Option<DockerCredentials> {
             if let Some(auth_entry) = auths.get(&key) {
                 if let Some(auth) = &auth_entry.auth {
                     log::debug!("Found static auth entry for registry key '{}'", key);
+                    // The 'auth' field in config.json is base64(username:password)
+                    if let Ok(decoded_bytes) = STANDARD.decode(auth) {
+                        if let Ok(decoded) = String::from_utf8(decoded_bytes) {
+                            let mut parts = decoded.splitn(2, ':');
+                            if let (Some(username), Some(password)) = (parts.next(), parts.next()) {
+                                return Some(DockerCredentials {
+                                    username: Some(username.to_string()),
+                                    password: Some(password.to_string()),
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                    }
+
+                    // Fallback to passing the raw auth string if decoding/parsing fails
                     return Some(DockerCredentials {
                         auth: Some(auth.clone()),
                         ..Default::default()
@@ -300,5 +316,62 @@ mod tests {
         assert!(keys.contains(&"https://index.docker.io/v1/".to_string()));
         assert!(keys.contains(&"index.docker.io/v1/".to_string()));
         assert!(keys.contains(&"https://registry-1.docker.io/v2/".to_string()));
+    }
+
+    #[test]
+    fn test_docker_config_parsing_static_auth() {
+        // base64("user:pass") = "dXNlcjpwYXNz"
+        let config_json = r#"{
+            "auths": {
+                "ghcr.io": {
+                    "auth": "dXNlcjpwYXNz"
+                }
+            }
+        }"#;
+
+        let config: DockerConfig = serde_json::from_str(config_json).unwrap();
+        let auths = config.auths.as_ref().unwrap();
+        let auth = auths.get("ghcr.io").unwrap().auth.as_ref().unwrap();
+
+        // Simulate the logic in get_credentials
+        let decoded_bytes = STANDARD.decode(auth).unwrap();
+        let decoded = String::from_utf8(decoded_bytes).unwrap();
+        let mut parts = decoded.splitn(2, ':');
+        let username = parts.next().unwrap();
+        let password = parts.next().unwrap();
+
+        assert_eq!(username, "user");
+        assert_eq!(password, "pass");
+    }
+
+    #[test]
+    fn test_docker_config_parsing_password_with_colon() {
+        // base64("robot:p:a:s:s") = "cm9ib3Q6cDphOnM6cw=="
+        let config_json = r#"{
+            "auths": {
+                "myregistry.local": {
+                    "auth": "cm9ib3Q6cDphOnM6cw=="
+                }
+            }
+        }"#;
+
+        let config: DockerConfig = serde_json::from_str(config_json).unwrap();
+        let auths = config.auths.as_ref().unwrap();
+        let auth = auths
+            .get("myregistry.local")
+            .unwrap()
+            .auth
+            .as_ref()
+            .unwrap();
+
+        // Simulate the logic in get_credentials
+        let decoded_bytes = STANDARD.decode(auth).unwrap();
+        let decoded = String::from_utf8(decoded_bytes).unwrap();
+        let mut parts = decoded.splitn(2, ':');
+        let username = parts.next().unwrap();
+        let password = parts.next().unwrap();
+
+        assert_eq!(username, "robot");
+        assert_eq!(password, "p:a:s:s");
     }
 }

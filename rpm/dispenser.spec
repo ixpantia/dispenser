@@ -5,7 +5,7 @@ Summary: Continously Deploy Containerized Services
 License: see /usr/share/doc/dispenser/copyright
 Distribution: Debian
 Group: Converted/unknown
-Requires: docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin, gnupg2, pass, libcap
+Requires: docker-ce docker-ce-cli containerd.io docker-buildx-plugin
 
 
 
