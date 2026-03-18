@@ -6,8 +6,8 @@ on:
       - main
 
 jobs:
-  build-deb:
-    name: Build .deb Package
+  build:
+    name: Build Packages (.deb & .rpm)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -18,69 +18,35 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
 
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev
-
-      - uses: extractions/setup-just@v3
-        with:
-          just-version: 1.42.4
-
-      - name: Build .deb package
-        run: just build-deb
-
-      - name: Upload .deb package
-        uses: actions/upload-artifact@v4
-        with:
-          name: dispenser-deb
-          path: dispenser-*.deb
-
-  build-rpm:
-    name: Build .rpm Package
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Cache cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          # The cache is automatically keyed by Cargo.lock and rustc version.
+          # It includes restore-keys by default, so version bumps in Cargo.lock
+          # will still benefit from the previous version's cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libssl-dev rpm
 
-      - uses: extractions/setup-just@v3
+      - name: Setup Just
+        uses: extractions/setup-just@v3
         with:
           just-version: 1.42.4
 
-      - name: Build .rpm package
-        run: just build-rpm
+      - name: Build packages
+        # Consolidating these into one job avoids compiling the project twice.
+        # Running both recipes in a single 'just' command ensures the 'build'
+        # dependency is satisfied once and reused for both packages.
+        run: just build-deb build-rpm
+
+      - name: Upload .deb package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dispenser-deb
+          path: dispenser-*.deb
 
       - name: Upload .rpm package
         uses: actions/upload-artifact@v4
