@@ -8,7 +8,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bollard::auth::DockerCredentials;
 use bollard::Docker;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -45,6 +45,20 @@ struct DockerConfigAuth {
 struct CredentialHelperResponse {
     username: Option<String>,
     secret: Option<String>,
+}
+
+/// Get Docker credentials for multiple registries.
+/// This avoids duplicate calls to credential helpers when multiple services use the same registry.
+pub async fn get_credentials_for_registries(
+    registries: &HashSet<Box<str>>,
+) -> HashMap<Box<str>, DockerCredentials> {
+    let mut credentials_map = HashMap::new();
+    for registry in registries {
+        if let Some(creds) = get_credentials(registry).await {
+            credentials_map.insert(registry.clone(), creds);
+        }
+    }
+    credentials_map
 }
 
 /// Get Docker credentials for a given registry from the Docker config file (~/.docker/config.json).
@@ -203,101 +217,9 @@ fn get_registry_keys(registry: &str) -> Vec<String> {
     keys
 }
 
-/// Extract the registry part from an image name.
-pub fn extract_registry(image: &str) -> &str {
-    if let Some(slash_pos) = image.find('/') {
-        let part = &image[..slash_pos];
-        // If the first part contains a dot or colon, or is "localhost", it's a registry
-        if part.contains('.') || part.contains(':') || part == "localhost" {
-            return part;
-        }
-    }
-    "docker.io"
-}
-
-/// Parse an image reference into (image, tag) components
-pub fn parse_image_reference(image: &str) -> (&str, &str) {
-    // Handle digest references (image@sha256:...)
-    if let Some(at_pos) = image.find('@') {
-        return (&image[..at_pos], &image[at_pos..]);
-    }
-
-    // Handle tag references (image:tag)
-    // Need to be careful with registry URLs that contain port numbers
-    // e.g., localhost:5000/myimage:tag
-    if let Some(colon_pos) = image.rfind(':') {
-        // Check if the colon is part of a port number in the registry URL
-        let after_colon = &image[colon_pos + 1..];
-        // If there's a slash after the colon, it's a port number, not a tag
-        if !after_colon.contains('/') {
-            return (&image[..colon_pos], after_colon);
-        }
-    }
-
-    // No tag specified, use "latest"
-    (image, "latest")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_extract_registry() {
-        assert_eq!(extract_registry("ubuntu"), "docker.io");
-        assert_eq!(extract_registry("ubuntu:latest"), "docker.io");
-        assert_eq!(extract_registry("docker.io/library/ubuntu"), "docker.io");
-        assert_eq!(extract_registry("ghcr.io/user/repo"), "ghcr.io");
-        assert_eq!(
-            extract_registry("localhost:5000/my-image"),
-            "localhost:5000"
-        );
-        assert_eq!(
-            extract_registry("myregistry.local:5000/image"),
-            "myregistry.local:5000"
-        );
-        assert_eq!(extract_registry("quay.io/coreos/etcd"), "quay.io");
-    }
-
-    #[test]
-    fn test_parse_image_reference() {
-        // Tag references
-        assert_eq!(parse_image_reference("ubuntu"), ("ubuntu", "latest"));
-        assert_eq!(parse_image_reference("ubuntu:20.04"), ("ubuntu", "20.04"));
-        assert_eq!(
-            parse_image_reference("ghcr.io/user/repo:tag"),
-            ("ghcr.io/user/repo", "tag")
-        );
-
-        // Port numbers in registry
-        assert_eq!(
-            parse_image_reference("localhost:5000/my-image"),
-            ("localhost:5000/my-image", "latest")
-        );
-        assert_eq!(
-            parse_image_reference("localhost:5000/my-image:1.0"),
-            ("localhost:5000/my-image", "1.0")
-        );
-
-        // Digest references
-        assert_eq!(
-            parse_image_reference(
-                "ubuntu@sha256:45b23dee08af5e43a7fea6c4cf9c25ccf269ee113168c19722f87876677c5cb2"
-            ),
-            (
-                "ubuntu",
-                "@sha256:45b23dee08af5e43a7fea6c4cf9c25ccf269ee113168c19722f87876677c5cb2"
-            )
-        );
-        assert_eq!(
-            parse_image_reference("ghcr.io/user/repo@sha256:12345"),
-            ("ghcr.io/user/repo", "@sha256:12345")
-        );
-        assert_eq!(
-            parse_image_reference("localhost:5000/image@sha256:123"),
-            ("localhost:5000/image", "@sha256:123")
-        );
-    }
 
     #[test]
     fn test_get_registry_keys() {

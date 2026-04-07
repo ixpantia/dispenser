@@ -395,11 +395,105 @@ impl VolumeEntry {
     }
 }
 
+/// Extract the registry part from an image name.
+pub fn extract_registry(image: &str) -> &str {
+    if let Some(slash_pos) = image.find('/') {
+        let part = &image[..slash_pos];
+        // If the first part contains a dot or colon, or is "localhost", it's a registry
+        if part.contains('.') || part.contains(':') || part == "localhost" {
+            return part;
+        }
+    }
+    "docker.io"
+}
+
+/// Parse an image reference into (image, tag) components
+pub fn parse_image_reference(image: &str) -> Image {
+    let registry = extract_registry(image);
+
+    // Handle digest references (image@sha256:...)
+    if let Some(at_pos) = image.find('@') {
+        let (name, tag) = (&image[..at_pos], &image[at_pos..]);
+        return Image {
+            registry: registry.into(),
+            name: name.into(),
+            tag: tag.into(),
+        };
+    }
+
+    // Handle tag references (image:tag)
+    // Need to be careful with registry URLs that contain port numbers
+    // e.g., localhost:5000/myimage:tag
+    if let Some(colon_pos) = image.rfind(':') {
+        // Check if the colon is part of a port number in the registry URL
+        let after_colon = &image[colon_pos + 1..];
+        // If there's a slash after the colon, it's a port number, not a tag
+        if !after_colon.contains('/') {
+            let (name, tag) = (&image[..colon_pos], after_colon);
+            return Image {
+                registry: registry.into(),
+                name: name.into(),
+                tag: tag.into(),
+            };
+        }
+    }
+
+    // No tag specified, use "latest"
+    return Image {
+        registry: registry.into(),
+        name: image.into(),
+        tag: "latest".into(),
+    };
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Image {
+    pub name: Box<str>,
+    pub registry: Box<str>,
+    pub tag: Box<str>,
+}
+
+impl<'de> serde::de::Deserialize<'de> for Image {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let image_str = String::deserialize(deserializer)?;
+
+        Ok(parse_image_reference(&image_str))
+    }
+}
+
+impl serde::ser::Serialize for Image {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        str::serialize(&self.to_string(), serializer)
+    }
+}
+
+impl std::fmt::Display for Image {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.tag.starts_with('@') {
+            write!(f, "{}{}", self.name, self.tag)
+        } else {
+            write!(f, "{}:{}", self.name, self.tag)
+        }
+    }
+}
+
+impl From<&str> for Image {
+    fn from(s: &str) -> Self {
+        parse_image_reference(s)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceEntry {
     pub name: String,
-    pub image: String,
+    pub image: Image,
     #[serde(default)]
     pub command: Option<Vec<String>>,
     #[serde(default)]
@@ -598,6 +692,99 @@ base_uri = "{base_uri}"
             url.as_str().ends_with("/data/deployments"),
             "Expected URL ending with /data/deployments, got: {}",
             url
+        );
+    }
+
+    #[test]
+    fn test_extract_registry() {
+        assert_eq!(extract_registry("ubuntu"), "docker.io");
+        assert_eq!(extract_registry("ubuntu:latest"), "docker.io");
+        assert_eq!(extract_registry("docker.io/library/ubuntu"), "docker.io");
+        assert_eq!(extract_registry("ghcr.io/user/repo"), "ghcr.io");
+        assert_eq!(
+            extract_registry("localhost:5000/my-image"),
+            "localhost:5000"
+        );
+        assert_eq!(
+            extract_registry("myregistry.local:5000/image"),
+            "myregistry.local:5000"
+        );
+        assert_eq!(extract_registry("quay.io/coreos/etcd"), "quay.io");
+    }
+
+    #[test]
+    fn test_parse_image_reference() {
+        // Tag references
+        assert_eq!(
+            parse_image_reference("ubuntu"),
+            Image {
+                registry: "docker.io".into(),
+                name: "ubuntu".into(),
+                tag: "latest".into()
+            }
+        );
+        assert_eq!(
+            parse_image_reference("ubuntu:20.04"),
+            Image {
+                registry: "docker.io".into(),
+                name: "ubuntu".into(),
+                tag: "20.04".into()
+            }
+        );
+        assert_eq!(
+            parse_image_reference("ghcr.io/user/repo:tag"),
+            Image {
+                registry: "ghcr.io".into(),
+                name: "ghcr.io/user/repo".into(),
+                tag: "tag".into()
+            }
+        );
+
+        // Port numbers in registry
+        assert_eq!(
+            parse_image_reference("localhost:5000/my-image"),
+            Image {
+                registry: "localhost:5000".into(),
+                name: "localhost:5000/my-image".into(),
+                tag: "latest".into()
+            }
+        );
+        assert_eq!(
+            parse_image_reference("localhost:5000/my-image:1.0"),
+            Image {
+                registry: "localhost:5000".into(),
+                name: "localhost:5000/my-image".into(),
+                tag: "1.0".into()
+            }
+        );
+
+        // Digest references
+        assert_eq!(
+            parse_image_reference(
+                "ubuntu@sha256:45b23dee08af5e43a7fea6c4cf9c25ccf269ee113168c19722f87876677c5cb2"
+            ),
+            Image {
+                registry: "docker.io".into(),
+                name: "ubuntu".into(),
+                tag: "@sha256:45b23dee08af5e43a7fea6c4cf9c25ccf269ee113168c19722f87876677c5cb2"
+                    .into()
+            }
+        );
+        assert_eq!(
+            parse_image_reference("ghcr.io/user/repo@sha256:12345"),
+            Image {
+                registry: "ghcr.io".into(),
+                name: "ghcr.io/user/repo".into(),
+                tag: "@sha256:12345".into()
+            }
+        );
+        assert_eq!(
+            parse_image_reference("localhost:5000/image@sha256:123"),
+            Image {
+                registry: "localhost:5000".into(),
+                name: "localhost:5000/image".into(),
+                tag: "@sha256:123".into()
+            }
         );
     }
 }

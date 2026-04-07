@@ -78,6 +78,7 @@ struct ServiceManagerInner {
     certbot: Option<CertbotSettings>,
     proxy: GlobalProxyConfig,
     telemetry_status_interval: Duration,
+    registries: HashSet<Box<str>>,
 }
 
 pub struct ServicesManager {
@@ -150,12 +151,17 @@ impl ServicesManager {
         Ok(())
     }
     pub async fn recreate_if_changed_and_cleanup(&self, other: &Self) {
+        let credentials_map = Arc::new(
+            crate::service::docker::get_credentials_for_registries(&self.inner.registries).await,
+        );
+
         let mut join_set = JoinSet::new();
 
         for this_instance in &self.inner.instances {
             let this_instance = Arc::clone(this_instance);
             let other_service_names = other.inner.service_names.clone();
             let other_instances = other.inner.instances.clone();
+            let credentials_map = Arc::clone(&credentials_map);
 
             join_set.spawn(async move {
                 // If the instance is present in other we check for recreation
@@ -165,7 +171,9 @@ impl ServicesManager {
                     .find(|(o, _)| *o == &this_instance.config.service.name)
                 {
                     Some((_, other_instance)) => {
-                        this_instance.recreate_if_required(other_instance).await;
+                        this_instance
+                            .recreate_if_required(other_instance, &credentials_map)
+                            .await;
                     }
                     None => {
                         // If the new container does not exist in other
@@ -281,6 +289,16 @@ impl ServicesManager {
             .map(|(_, s)| s.service.name.clone())
             .collect();
 
+        let mut registries = std::collections::HashSet::new();
+        for (_, service_file) in &config.services {
+            if service_file.dispenser.watch {
+                registries.insert(service_file.service.image.registry.clone());
+            }
+        }
+
+        let credentials_map =
+            Arc::new(crate::service::docker::get_credentials_for_registries(&registries).await);
+
         for (_, service_file) in &mut config.services {
             service_file.depends_on.retain(|name, _| {
                 let exists = loaded_service_names.contains(name);
@@ -308,12 +326,19 @@ impl ServicesManager {
                 .copied()
                 .expect("IP should have been allocated for all services");
             let telemetry = telemetry.clone();
+            let credentials_map = Arc::clone(&credentials_map);
             join_set.spawn(async move {
                 log::debug!("Initializing config for {entry_path:?}");
 
                 // Initialize the image watcher if watch is enabled
                 let image_watcher = if service_file.dispenser.watch {
-                    Some(ImageWatcher::initialize(&service_file.service.image).await)
+                    Some(
+                        ImageWatcher::initialize(
+                            service_file.service.image.clone(),
+                            credentials_map.as_ref(),
+                        )
+                        .await,
+                    )
                 } else {
                     None
                 };
@@ -387,6 +412,7 @@ impl ServicesManager {
             instances,
             networks,
             delay,
+            registries,
             router,
             proxy,
             certbot: config.entrypoint_file.certbot,
@@ -409,49 +435,54 @@ impl ServicesManager {
         let delay = self.inner.delay;
         let status_delay = self.inner.telemetry_status_interval;
 
-        let polls = self
-            .inner
-            .instances
-            .iter()
-            .map(|instance| {
-                let instance = instance.clone();
-                async move {
-                    let mut last_image_poll = std::time::Instant::now();
-                    let mut last_status_poll = std::time::Instant::now();
-                    let mut init = true;
-                    loop {
-                        let poll_images = last_image_poll.elapsed() >= delay;
-                        if poll_images {
-                            last_image_poll = std::time::Instant::now();
-                        }
-
-                        let poll_status = last_status_poll.elapsed() >= status_delay;
-                        if poll_status {
-                            last_status_poll = std::time::Instant::now();
-                        }
-
-                        // Scope to release the lock
-                        let poll_start = std::time::Instant::now();
-                        instance.poll(poll_images, poll_status, init).await;
-                        let poll_duration = poll_start.elapsed();
-                        log::debug!(
-                            "Polling for {} took {:?}",
-                            instance.config.service.name,
-                            poll_duration
-                        );
-                        init = false;
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                }
-            })
-            .collect::<JoinSet<_>>();
+        let mut last_image_poll = std::time::Instant::now();
+        let mut last_status_poll = std::time::Instant::now();
+        let mut init = true;
 
         let mut cancel_rx = self.cancel_rx.lock().await;
 
-        tokio::select! {
-            _ = polls.join_all() => {}
-            _ = cancel_rx.recv() => {
-                log::warn!("CANCELLED");
+        loop {
+            let poll_images = last_image_poll.elapsed() >= delay || init;
+            let poll_status = last_status_poll.elapsed() >= status_delay || init;
+
+            if poll_images || poll_status {
+                let credentials_map = Arc::new(
+                    crate::service::docker::get_credentials_for_registries(&self.inner.registries)
+                        .await,
+                );
+
+                let mut join_set = JoinSet::new();
+                for instance in &self.inner.instances {
+                    let instance = instance.clone();
+                    let creds = Arc::clone(&credentials_map);
+                    join_set.spawn(async move {
+                        instance
+                            .poll(poll_images, poll_status, init, creds.as_ref())
+                            .await;
+                    });
+                }
+
+                while let Some(result) = join_set.join_next().await {
+                    if let Err(e) = result {
+                        log::error!("Poll task failed: {}", e);
+                    }
+                }
+
+                if poll_images {
+                    last_image_poll = std::time::Instant::now();
+                }
+                if poll_status {
+                    last_status_poll = std::time::Instant::now();
+                }
+                init = false;
+            }
+
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                _ = cancel_rx.recv() => {
+                    log::warn!("CANCELLED");
+                    return;
+                }
             }
         }
     }
@@ -597,7 +628,7 @@ mod tests {
         ServiceFile {
             service: ServiceEntry {
                 name: name.to_string(),
-                image: "test:latest".to_string(),
+                image: "test:latest".into(),
                 hostname: None,
                 user: None,
                 working_dir: None,
@@ -771,7 +802,7 @@ mod tests {
                 dir: PathBuf::from(format!("/service-{}", i)),
                 service: ServiceEntry {
                     name: format!("service-{}", i),
-                    image: "test:latest".to_string(),
+                    image: "test:latest".into(),
                     hostname: None,
                     user: None,
                     working_dir: None,
@@ -820,6 +851,7 @@ mod tests {
                 proxy: GlobalProxyConfig::default(),
                 certbot: None,
                 telemetry_status_interval: Duration::from_secs(60),
+                registries: HashSet::new(),
             },
             cancel_tx: tokio::sync::mpsc::channel(1).0,
             cancel_rx: Mutex::new(tokio::sync::mpsc::channel(1).1),

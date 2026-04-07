@@ -2,7 +2,10 @@ use bollard::query_parameters::{CreateImageOptions, CreateImageOptionsBuilder};
 use futures_util::StreamExt;
 use thiserror::Error;
 
-use crate::service::docker::get_docker;
+use std::collections::HashMap;
+
+use crate::service::{docker::get_docker, file::Image};
+use bollard::auth::DockerCredentials;
 
 pub type Result<T> = std::result::Result<T, ImageWatcherError>;
 
@@ -44,7 +47,7 @@ use tokio::sync::Mutex;
 /// equal if they watch the same image, regardless of their current digest state.
 #[derive(Debug)]
 pub struct ImageWatcher {
-    image: Box<str>,
+    image: Image,
     last_digest: Mutex<Option<Sha256>>,
 }
 
@@ -64,9 +67,12 @@ pub enum ImageWatcherStatus {
 }
 
 impl ImageWatcher {
-    pub async fn initialize(image: &str) -> Self {
-        log::info!("Initializing watch for {image}");
-        let last_digest = match get_latest_digest(image).await {
+    pub async fn initialize(
+        image: Image,
+        credentials_map: &HashMap<Box<str>, DockerCredentials>,
+    ) -> Self {
+        log::info!("Initializing watch for {}", image.name);
+        let last_digest = match get_latest_digest(&image, credentials_map).await {
             Ok(digest) => Some(digest),
             Err(e) => {
                 log::warn!("{e}");
@@ -74,15 +80,17 @@ impl ImageWatcher {
             }
         };
 
-        let image = image.into();
         ImageWatcher {
             image,
             last_digest: Mutex::new(last_digest),
         }
     }
-    pub async fn update(&self) -> ImageWatcherStatus {
+    pub async fn update(
+        &self,
+        credentials_map: &HashMap<Box<str>, DockerCredentials>,
+    ) -> ImageWatcherStatus {
         let last_digest = *self.last_digest.lock().await;
-        let new_sha256 = get_latest_digest(&self.image).await;
+        let new_sha256 = get_latest_digest(&self.image, credentials_map).await;
         match new_sha256 {
             Err(e) => {
                 log::warn!("{e}");
@@ -93,7 +101,7 @@ impl ImageWatcher {
                 *self.last_digest.lock().await = Some(new_sha256);
                 log::info!(
                     "Found a new version for {}, update will start soon...",
-                    self.image,
+                    self.image.name,
                 );
                 ImageWatcherStatus::Updated
             }
@@ -101,18 +109,19 @@ impl ImageWatcher {
     }
 }
 
-async fn get_latest_digest(image: &str) -> Result<Sha256> {
+async fn get_latest_digest(
+    image: &Image,
+    credentials_map: &HashMap<Box<str>, DockerCredentials>,
+) -> Result<Sha256> {
     let docker = get_docker();
 
     // Parse image name and tag
-    let (image_name, tag) = crate::service::docker::parse_image_reference(image);
-    let registry = crate::service::docker::extract_registry(image_name);
-    let credentials = crate::service::docker::get_credentials(registry).await;
+    let credentials = credentials_map.get(image.registry.as_ref()).cloned();
 
     // Pull the latest image using bollard
     let options: CreateImageOptions = CreateImageOptionsBuilder::new()
-        .from_image(image_name)
-        .tag(tag)
+        .from_image(&image.name)
+        .tag(&image.tag)
         .build();
 
     let mut stream = docker.create_image(Some(options), None, credentials);
@@ -131,7 +140,7 @@ async fn get_latest_digest(image: &str) -> Result<Sha256> {
     }
 
     // Inspect the image to get its digest
-    let inspect = docker.inspect_image(image).await?;
+    let inspect = docker.inspect_image(&image.name).await?;
 
     // Try to get digest from RepoDigests first
     if let Some(repo_digests) = inspect.repo_digests {

@@ -1,6 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
+use bollard::auth::DockerCredentials;
 use bollard::container::LogOutput;
 use bollard::models::{
     ContainerCreateBody, EndpointIpamConfig, EndpointSettings, HealthStatusEnum, HostConfig,
@@ -103,7 +104,11 @@ async fn get_container_status(container_name: &str) -> Result<ContainerStatus, S
 }
 
 impl ServiceInstance {
-    pub async fn run_container(&self, trigger_type: TriggerType) -> Result<(), ServiceConfigError> {
+    pub async fn run_container(
+        &self,
+        trigger_type: TriggerType,
+        credentials_map: &HashMap<Box<str>, DockerCredentials>,
+    ) -> Result<(), ServiceConfigError> {
         let mut depends_on_conditions = Vec::with_capacity(self.config.depends_on.len());
         loop {
             for (container, condition) in &self.config.depends_on {
@@ -144,7 +149,8 @@ impl ServiceInstance {
         if self.config.dispenser.pull == PullOptions::Always
             || self.container_does_not_exist().await
         {
-            self.recreate_container(trigger_type).await?;
+            self.recreate_container(trigger_type, credentials_map)
+                .await?;
         }
 
         let docker = get_docker();
@@ -251,19 +257,21 @@ impl ServiceInstance {
         })
     }
 
-    pub async fn pull_image(&self) -> Result<(), ServiceConfigError> {
-        log::info!("Pulling image: {}", self.config.service.image);
+    pub async fn pull_image(
+        &self,
+        credentials_map: &HashMap<Box<str>, DockerCredentials>,
+    ) -> Result<(), ServiceConfigError> {
+        log::info!("Pulling image: {}", self.config.service.image.name);
         let docker = get_docker();
 
+        let image = &self.config.service.image;
+
         // Parse image name and tag
-        let (image, tag) =
-            crate::service::docker::parse_image_reference(&self.config.service.image);
-        let registry = crate::service::docker::extract_registry(image);
-        let credentials = crate::service::docker::get_credentials(registry).await;
+        let credentials = credentials_map.get(image.registry.as_ref()).cloned();
 
         let options: CreateImageOptions = CreateImageOptionsBuilder::new()
-            .from_image(image)
-            .tag(tag)
+            .from_image(&image.name)
+            .tag(&image.tag)
             .build();
 
         let mut stream = docker.create_image(Some(options), None, credentials);
@@ -276,13 +284,13 @@ impl ServiceInstance {
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to pull image {}: {}", self.config.service.image, e);
+                    log::error!("Failed to pull image {}: {}", image.name, e);
                     return Err(ServiceConfigError::DockerApi(e));
                 }
             }
         }
 
-        log::info!("Image {} pulled successfully", self.config.service.image);
+        log::info!("Image {} pulled successfully", image.name);
         Ok(())
     }
 
@@ -505,7 +513,7 @@ impl ServiceInstance {
 
         // Build container config
         let config = ContainerCreateBody {
-            image: Some(self.config.service.image.clone()),
+            image: Some(self.config.service.image.name.to_string()),
             hostname: self.config.service.hostname.clone(),
             user: self.config.service.user.clone(),
             working_dir: self.config.service.working_dir.clone(),
@@ -593,8 +601,9 @@ impl ServiceInstance {
     pub async fn recreate_container(
         &self,
         trigger_type: TriggerType,
+        credentials_map: &HashMap<Box<str>, DockerCredentials>,
     ) -> Result<(), ServiceConfigError> {
-        self.pull_image().await?;
+        self.pull_image(credentials_map).await?;
         let _ = self.stop_container().await;
         let _ = self.remove_container().await;
         self.create_container(trigger_type).await?;
@@ -642,9 +651,16 @@ impl ServiceInstance {
         self.config != other.config
     }
 
-    pub async fn recreate_if_required(&self, other: &Self) {
+    pub async fn recreate_if_required(
+        &self,
+        other: &Self,
+        credentials_map: &HashMap<Box<str>, DockerCredentials>,
+    ) {
         if self.requires_recreate(other).await {
-            if let Err(e) = self.recreate_container(TriggerType::ManualReload).await {
+            if let Err(e) = self
+                .recreate_container(TriggerType::ManualReload, credentials_map)
+                .await
+            {
                 log::error!(
                     "Failed to recreate container {}: {}",
                     self.config.service.name,
@@ -734,14 +750,23 @@ impl ServiceInstance {
         }
     }
 
-    pub async fn poll(&self, poll_images: bool, poll_status: bool, init: bool) {
+    pub async fn poll(
+        &self,
+        poll_images: bool,
+        poll_status: bool,
+        init: bool,
+        credentials_map: &HashMap<Box<str>, DockerCredentials>,
+    ) {
         if poll_status {
             self.start_log_watcher().await;
         }
 
         if init && self.config.dispenser.initialize == Initialize::Immediately {
             log::info!("Starting {} immediately", self.config.service.name);
-            if let Err(e) = self.run_container(TriggerType::Startup).await {
+            if let Err(e) = self
+                .run_container(TriggerType::Startup, credentials_map)
+                .await
+            {
                 log::error!(
                     "Failed to run container {}: {}",
                     self.config.service.name,
@@ -755,7 +780,7 @@ impl ServiceInstance {
         if let Some(cron_watcher) = &self.cron_watcher {
             if cron_watcher.is_ready() {
                 // If the cron matches we can short circuit the function
-                if let Err(e) = self.run_container(TriggerType::Cron).await {
+                if let Err(e) = self.run_container(TriggerType::Cron, credentials_map).await {
                     log::error!(
                         "Failed to run container {} from cron: {}",
                         self.config.service.name,
@@ -772,20 +797,26 @@ impl ServiceInstance {
             // try to update the watchers and check
             // if any of them were updated
             if let Some(image_watcher) = &self.image_watcher {
-                match image_watcher.update().await {
+                match image_watcher.update(credentials_map).await {
                     ImageWatcherStatus::Updated => {
                         log::info!(
                             "Image updated for service {}, recreating container...",
                             self.config.service.name
                         );
-                        if let Err(e) = self.recreate_container(TriggerType::ImageUpdate).await {
+                        if let Err(e) = self
+                            .recreate_container(TriggerType::ImageUpdate, credentials_map)
+                            .await
+                        {
                             log::error!(
                                 "Failed to recreate container {}: {}",
                                 self.config.service.name,
                                 e
                             );
                         }
-                        if let Err(e) = self.run_container(TriggerType::ImageUpdate).await {
+                        if let Err(e) = self
+                            .run_container(TriggerType::ImageUpdate, credentials_map)
+                            .await
+                        {
                             log::error!(
                                 "Failed to run container {}: {}",
                                 self.config.service.name,
