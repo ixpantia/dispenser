@@ -2643,7 +2643,7 @@ dependencies = [
 
 [[package]]
 name = "dispenser"
-version = "0.16.4"
+version = "0.16.5"
 dependencies = [
  "arrow",
  "async-trait",

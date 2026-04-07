@@ -35,8 +35,8 @@ pub struct TelemetryService {
     buffer_limit: usize,
 }
 
-/// 50MB
-const POOL_SIZE: usize = 50 * 1024 * 1024;
+/// 10MB
+const POOL_SIZE: usize = 10 * 1024 * 1024;
 
 impl TelemetryService {
     pub fn new(config: TelemetryConfig, rx: Receiver<DispenserEvent>) -> Self {
