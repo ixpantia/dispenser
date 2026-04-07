@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+use url::Url;
 
 use super::vars::{render_template, ServiceConfigError, ServiceVarsMaterialized};
 
@@ -64,27 +65,75 @@ pub struct CertbotSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TelemetryConfig {
     pub enabled: bool,
-    pub base_uri: String,
+    #[serde(deserialize_with = "deserialize_base_uri")]
+    pub base_uri: Url,
     pub buffer_size: Option<usize>,
     #[serde(default = "default_status_interval")]
     pub status_interval: u64,
 }
 
+/// Deserialize `base_uri` from a string, supporting:
+/// - Cloud storage URIs (`s3://bucket/path`, `gs://...`, `az://...`, `file://...`)
+/// - Absolute local paths (`/home/user/data`) → `file:///home/user/data`
+/// - Relative paths (`telem`, `./data`) → resolved against CWD to `file://` URL
+fn deserialize_base_uri<'de, D>(deserializer: D) -> Result<Url, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    let trimmed = raw.trim_end_matches('/');
+
+    // Try parsing as a URL first — succeeds for schemes like s3://, gs://, az://, file://
+    if let Ok(url) = Url::parse(trimmed) {
+        return Ok(url);
+    }
+
+    // Not a valid URL, treat as a filesystem path
+    let path = std::path::Path::new(trimmed);
+    let abs_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::path::absolute(path).map_err(|e| {
+            serde::de::Error::custom(format!(
+                "Failed to resolve relative path '{}': {}",
+                trimmed, e
+            ))
+        })?
+    };
+
+    Url::from_file_path(&abs_path).map_err(|_| {
+        serde::de::Error::custom(format!(
+            "Failed to convert path to URL: '{}'",
+            abs_path.display()
+        ))
+    })
+}
+
 impl TelemetryConfig {
-    pub fn table_uri_deployments(&self) -> String {
-        format!("{}/deployments", self.base_uri.trim_end_matches('/'))
+    fn table_url(&self, table_name: &str) -> Url {
+        let mut url = self.base_uri.clone();
+        // Ensure the path ends with '/' so we can append a segment
+        if !url.path().ends_with('/') {
+            url.set_path(&format!("{}/", url.path()));
+        }
+        url.join(table_name)
+            .unwrap_or_else(|e| panic!("Failed to join table '{}': {}", table_name, e))
     }
-    pub fn table_uri_status(&self) -> String {
-        format!("{}/status", self.base_uri.trim_end_matches('/'))
+
+    pub fn table_uri_deployments(&self) -> Url {
+        self.table_url("deployments")
     }
-    pub fn table_uri_logs(&self) -> String {
-        format!("{}/logs", self.base_uri.trim_end_matches('/'))
+    pub fn table_uri_status(&self) -> Url {
+        self.table_url("status")
     }
-    pub fn table_uri_traces(&self) -> String {
-        format!("{}/traces", self.base_uri.trim_end_matches('/'))
+    pub fn table_uri_logs(&self) -> Url {
+        self.table_url("logs")
     }
-    pub fn table_uri_container_output(&self) -> String {
-        format!("{}/container-output", self.base_uri.trim_end_matches('/'))
+    pub fn table_uri_traces(&self) -> Url {
+        self.table_url("traces")
+    }
+    pub fn table_uri_container_output(&self) -> Url {
+        self.table_url("container-output")
     }
 }
 
@@ -446,5 +495,109 @@ mod tests {
     #[test]
     fn test_network_driver_default() {
         assert_eq!(NetworkDriver::default(), NetworkDriver::Bridge);
+    }
+
+    fn parse_telemetry_config(base_uri: &str) -> TelemetryConfig {
+        let toml_str = format!(
+            r#"
+enabled = true
+base_uri = "{base_uri}"
+"#
+        );
+        toml::from_str(&toml_str).expect("Failed to parse TelemetryConfig")
+    }
+
+    #[test]
+    fn test_telemetry_config_s3_uri() {
+        let config = parse_telemetry_config("s3://my-bucket/dispenser");
+        assert_eq!(
+            config.table_uri_deployments().as_str(),
+            "s3://my-bucket/dispenser/deployments"
+        );
+        assert_eq!(
+            config.table_uri_status().as_str(),
+            "s3://my-bucket/dispenser/status"
+        );
+        assert_eq!(
+            config.table_uri_logs().as_str(),
+            "s3://my-bucket/dispenser/logs"
+        );
+        assert_eq!(
+            config.table_uri_traces().as_str(),
+            "s3://my-bucket/dispenser/traces"
+        );
+        assert_eq!(
+            config.table_uri_container_output().as_str(),
+            "s3://my-bucket/dispenser/container-output"
+        );
+    }
+
+    #[test]
+    fn test_telemetry_config_gs_uri() {
+        let config = parse_telemetry_config("gs://my-bucket/telemetry");
+        assert_eq!(
+            config.table_uri_deployments().as_str(),
+            "gs://my-bucket/telemetry/deployments"
+        );
+    }
+
+    #[test]
+    fn test_telemetry_config_local_path() {
+        let config = parse_telemetry_config("/home/user/data");
+        assert_eq!(
+            config.table_uri_deployments().as_str(),
+            "file:///home/user/data/deployments"
+        );
+        assert_eq!(
+            config.table_uri_status().as_str(),
+            "file:///home/user/data/status"
+        );
+        assert_eq!(
+            config.table_uri_container_output().as_str(),
+            "file:///home/user/data/container-output"
+        );
+    }
+
+    #[test]
+    fn test_telemetry_config_file_uri() {
+        let config = parse_telemetry_config("file:///var/log/dispenser");
+        assert_eq!(
+            config.table_uri_deployments().as_str(),
+            "file:///var/log/dispenser/deployments"
+        );
+    }
+
+    #[test]
+    fn test_telemetry_config_trailing_slash() {
+        let config = parse_telemetry_config("s3://my-bucket/dispenser/");
+        assert_eq!(
+            config.table_uri_deployments().as_str(),
+            "s3://my-bucket/dispenser/deployments"
+        );
+    }
+
+    #[test]
+    fn test_telemetry_config_relative_dir_name() {
+        let config = parse_telemetry_config("telem");
+        let url = config.table_uri_deployments();
+        // Should be resolved as file:// URL against CWD
+        assert_eq!(url.scheme(), "file");
+        assert!(
+            url.as_str().ends_with("/telem/deployments"),
+            "Expected URL ending with /telem/deployments, got: {}",
+            url
+        );
+    }
+
+    #[test]
+    fn test_telemetry_config_relative_dot_slash() {
+        let config = parse_telemetry_config("./data");
+        let url = config.table_uri_deployments();
+        assert_eq!(url.scheme(), "file");
+        assert!(
+            url.as_str().ends_with("/data/deployments"),
+            "Expected URL ending with /data/deployments, got: {}",
+            url
+        );
     }
 }

@@ -7,8 +7,9 @@ use super::schema::{
     create_status_table, create_traces_table,
 };
 use crate::service::file::TelemetryConfig;
-use deltalake::{DeltaOps, DeltaTableError};
+use deltalake::{DeltaTable, DeltaTableError};
 use log::{error, info, warn};
+use url::Url;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
 
@@ -260,11 +261,11 @@ impl TelemetryService {
 
     async fn write_to_delta(
         &self,
-        table_uri: &str,
+        table_uri: &Url,
         batch: arrow::record_batch::RecordBatch,
         table_type: TableType,
     ) -> Result<(), DeltaTableError> {
-        let table = match deltalake::open_table(table_uri).await {
+        let table = match DeltaTable::try_from_url(table_uri.clone()).await {
             Ok(table) => table,
             Err(DeltaTableError::NotATable(_)) | Err(DeltaTableError::InvalidTableLocation(_)) => {
                 match table_type {
@@ -278,8 +279,8 @@ impl TelemetryService {
             Err(e) => return Err(e),
         };
 
-        let ops = DeltaOps(table);
-        ops.write(vec![batch])
+        let _ops = table
+            .write(vec![batch])
             .with_save_mode(deltalake::protocol::SaveMode::Append)
             .await?;
         Ok(())

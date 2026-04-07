@@ -364,11 +364,11 @@ impl ServiceInstance {
 
         // Build port bindings
         let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
-        let mut exposed_ports: HashMap<String, HashMap<(), ()>> = HashMap::new();
+        let mut exposed_ports = Vec::new();
 
         for port in &self.config.ports {
             let container_port = format!("{}/tcp", port.container);
-            exposed_ports.insert(container_port.clone(), HashMap::new());
+            exposed_ports.push(container_port.clone());
             port_bindings.insert(
                 container_port,
                 Some(vec![PortBinding {
@@ -554,7 +554,7 @@ impl ServiceInstance {
         // Connect to user-defined networks (default dispenser network is already connected)
         for network in &self.config.network {
             let connect_request = NetworkConnectRequest {
-                container: Some(self.config.service.name.clone()),
+                container: self.config.service.name.clone(),
                 endpoint_config: Some(EndpointSettings::default()),
             };
 

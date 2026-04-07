@@ -6,8 +6,9 @@ use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
 use deltalake::{DeltaTable, DeltaTableError, TableProperty};
 use std::sync::Arc;
+use url::Url;
 
-pub async fn create_traces_table(table_uri: &str) -> Result<DeltaTable, DeltaTableError> {
+pub async fn create_traces_table(table_uri: &Url) -> Result<DeltaTable, DeltaTableError> {
     let columns = vec![
         StructField::new("date", DeltaDataType::Primitive(PrimitiveType::Date), false),
         StructField::new(
@@ -73,7 +74,7 @@ pub async fn create_traces_table(table_uri: &str) -> Result<DeltaTable, DeltaTab
         StructField::new(
             "events",
             DeltaDataType::Array(Box::new(ArrayType::new(
-                DeltaDataType::Struct(Box::new(StructType::new(vec![
+                DeltaDataType::Struct(Box::new(StructType::try_new(vec![
                     StructField::new(
                         "timestamp",
                         DeltaDataType::Primitive(PrimitiveType::Timestamp),
@@ -89,7 +90,7 @@ pub async fn create_traces_table(table_uri: &str) -> Result<DeltaTable, DeltaTab
                         DeltaDataType::Primitive(PrimitiveType::String),
                         true,
                     ),
-                ]))),
+                ]).expect("Schema must always be valid"))),
                 true,
             ))),
             true,
@@ -97,7 +98,7 @@ pub async fn create_traces_table(table_uri: &str) -> Result<DeltaTable, DeltaTab
     ];
 
     CreateBuilder::new()
-        .with_location(table_uri)
+        .with_location(table_uri.as_str())
         .with_columns(columns)
         .with_partition_columns(vec!["date"])
         .with_save_mode(SaveMode::Ignore)
