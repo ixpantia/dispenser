@@ -51,7 +51,7 @@ impl ContainerOutputBuffer {
         self.count == 0
     }
 
-    pub fn into_record_batch(mut self) -> arrow::error::Result<RecordBatch> {
+    pub fn into_record_batch(&mut self) -> arrow::error::Result<RecordBatch> {
         let schema = container_output_schema();
 
         RecordBatch::try_new(

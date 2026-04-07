@@ -154,10 +154,8 @@ impl TelemetryService {
         // Flush Deployments
         if !self.deployments_buffer.is_empty() {
             let count = self.deployments_buffer.len();
-            let old_buffer =
-                std::mem::replace(&mut self.deployments_buffer, DeploymentsBuffer::new(64));
 
-            match old_buffer.into_record_batch() {
+            match self.deployments_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
                         .write_to_delta(
@@ -179,9 +177,8 @@ impl TelemetryService {
         // Flush Status
         if !self.status_buffer.is_empty() {
             let count = self.status_buffer.len();
-            let old_buffer = std::mem::replace(&mut self.status_buffer, StatusBuffer::new(64));
 
-            match old_buffer.into_record_batch() {
+            match self.status_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
                         .write_to_delta(&self.config.table_uri_status(), batch, TableType::Status)
@@ -199,9 +196,8 @@ impl TelemetryService {
         // Flush Logs
         if !self.logs_buffer.is_empty() {
             let count = self.logs_buffer.len();
-            let old_buffer = std::mem::replace(&mut self.logs_buffer, LogsBuffer::new(64));
 
-            match old_buffer.into_record_batch() {
+            match self.logs_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
                         .write_to_delta(&self.config.table_uri_logs(), batch, TableType::Logs)
@@ -219,9 +215,8 @@ impl TelemetryService {
         // Flush Spans
         if !self.spans_buffer.is_empty() {
             let count = self.spans_buffer.len();
-            let old_buffer = std::mem::replace(&mut self.spans_buffer, SpansBuffer::new(64));
 
-            match old_buffer.into_record_batch() {
+            match self.spans_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
                         .write_to_delta(&self.config.table_uri_traces(), batch, TableType::Traces)
@@ -239,12 +234,8 @@ impl TelemetryService {
         // Flush Container Output
         if !self.container_output_buffer.is_empty() {
             let count = self.container_output_buffer.len();
-            let old_buffer = std::mem::replace(
-                &mut self.container_output_buffer,
-                ContainerOutputBuffer::new(64),
-            );
 
-            match old_buffer.into_record_batch() {
+            match self.container_output_buffer.into_record_batch() {
                 Ok(batch) => {
                     if let Err(e) = self
                         .write_to_delta(

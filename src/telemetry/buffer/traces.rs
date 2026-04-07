@@ -206,7 +206,7 @@ impl SpansBuffer {
         self.count == 0
     }
 
-    pub fn into_record_batch(mut self) -> arrow::error::Result<RecordBatch> {
+    pub fn into_record_batch(&mut self) -> arrow::error::Result<RecordBatch> {
         let schema = traces_schema();
 
         RecordBatch::try_new(
