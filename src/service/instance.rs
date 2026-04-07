@@ -277,13 +277,13 @@ impl ServiceInstance {
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to pull image {}: {}", image.name, e);
+                    log::error!("Failed to pull image {}:{}: {}", image.name, image.tag, e);
                     return Err(ServiceConfigError::DockerApi(e));
                 }
             }
         }
 
-        log::info!("Image {} pulled successfully", image.name);
+        log::info!("Image {}:{} pulled successfully", image.name, image.tag);
         Ok(())
     }
 
@@ -506,7 +506,7 @@ impl ServiceInstance {
 
         // Build container config
         let config = ContainerCreateBody {
-            image: Some(self.config.service.image.name.to_string()),
+            image: Some(self.config.service.image.to_string()),
             hostname: self.config.service.hostname.clone(),
             user: self.config.service.user.clone(),
             working_dir: self.config.service.working_dir.clone(),

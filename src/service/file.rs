@@ -786,5 +786,14 @@ base_uri = "{base_uri}"
                 tag: "@sha256:123".into()
             }
         );
+
+        assert_eq!(
+            parse_image_reference("postgres:18"),
+            Image {
+                registry: "docker.io".into(),
+                name: "postgres".into(),
+                tag: "18".into()
+            }
+        );
     }
 }
