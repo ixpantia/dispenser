@@ -263,6 +263,7 @@ impl ServiceInstance {
 
         let options: CreateImageOptions = CreateImageOptionsBuilder::new()
             .from_image(&image.name)
+            .from_src(&image.registry)
             .tag(&image.tag)
             .build();
 
