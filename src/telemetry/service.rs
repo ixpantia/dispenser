@@ -54,6 +54,7 @@ impl TelemetryService {
         let datafusion_session_state = Arc::new(
             SessionStateBuilder::new()
                 .with_runtime_env(runtime_env.into())
+                .with_default_features()
                 .build(),
         ) as Arc<dyn Session>;
 
