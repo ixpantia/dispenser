@@ -14,7 +14,6 @@ use deltalake::datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use deltalake::datafusion::execution::{DiskManager, SessionStateBuilder};
 use deltalake::{DeltaTable, DeltaTableError};
 use log::{error, info, warn};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
@@ -44,8 +43,7 @@ impl TelemetryService {
 
         let memory_pool = Arc::new(FairSpillPool::new(POOL_SIZE));
 
-        let disk_manager = DiskManager::builder()
-            .with_mode(DiskManagerMode::OsTmpDirectory);
+        let disk_manager = DiskManager::builder().with_mode(DiskManagerMode::OsTmpDirectory);
 
         let runtime_env = RuntimeEnvBuilder::new()
             .with_memory_pool(memory_pool)
