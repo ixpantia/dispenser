@@ -7,8 +7,15 @@ use super::schema::{
     create_status_table, create_traces_table,
 };
 use crate::service::file::TelemetryConfig;
+use deltalake::datafusion::catalog::Session;
+use deltalake::datafusion::execution::disk_manager::DiskManagerMode;
+use deltalake::datafusion::execution::memory_pool::FairSpillPool;
+use deltalake::datafusion::execution::runtime_env::RuntimeEnvBuilder;
+use deltalake::datafusion::execution::{DiskManager, SessionStateBuilder};
 use deltalake::{DeltaTable, DeltaTableError};
 use log::{error, info, warn};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
 use url::Url;
@@ -19,6 +26,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
 pub struct TelemetryService {
     config: TelemetryConfig,
     rx: Receiver<DispenserEvent>,
+    datafusion_session_state: Arc<dyn Session>,
     deployments_buffer: DeploymentsBuffer,
     status_buffer: StatusBuffer,
     logs_buffer: LogsBuffer,
@@ -27,11 +35,33 @@ pub struct TelemetryService {
     buffer_limit: usize,
 }
 
+/// 50MB
+const POOL_SIZE: usize = 50 * 1024 * 1024;
+
 impl TelemetryService {
     pub fn new(config: TelemetryConfig, rx: Receiver<DispenserEvent>) -> Self {
         let buffer_limit = config.buffer_size.unwrap_or(DEFAULT_BUFFER_SIZE);
+
+        let memory_pool = Arc::new(FairSpillPool::new(POOL_SIZE));
+
+        let disk_manager = DiskManager::builder()
+            .with_mode(DiskManagerMode::OsTmpDirectory);
+
+        let runtime_env = RuntimeEnvBuilder::new()
+            .with_memory_pool(memory_pool)
+            .with_disk_manager_builder(disk_manager)
+            .build()
+            .expect("Unable to buld memory pool");
+
+        let datafusion_session_state = Arc::new(
+            SessionStateBuilder::new()
+                .with_runtime_env(runtime_env.into())
+                .build(),
+        ) as Arc<dyn Session>;
+
         Self {
             config,
+            datafusion_session_state,
             rx,
             deployments_buffer: DeploymentsBuffer::new(64),
             status_buffer: StatusBuffer::new(64),
@@ -270,6 +300,7 @@ impl TelemetryService {
 
         let _ops = table
             .write(vec![batch])
+            .with_session_state(self.datafusion_session_state.clone())
             .with_save_mode(deltalake::protocol::SaveMode::Append)
             .await?;
         Ok(())
