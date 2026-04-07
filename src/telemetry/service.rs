@@ -132,11 +132,11 @@ impl TelemetryService {
 
     fn handle_event(&mut self, event: DispenserEvent) {
         match event {
-            DispenserEvent::Deployment(e) => self.deployments_buffer.push(&e),
-            DispenserEvent::ContainerStatus(e) => self.status_buffer.push(&e),
-            DispenserEvent::LogBatch(data) => self.logs_buffer.push_logs_data(&data),
-            DispenserEvent::SpanBatch(data) => self.spans_buffer.push_traces_data(&data),
-            DispenserEvent::ContainerOutput(e) => self.container_output_buffer.push(&e),
+            DispenserEvent::Deployment(e) => self.deployments_buffer.push(*e),
+            DispenserEvent::ContainerStatus(e) => self.status_buffer.push(*e),
+            DispenserEvent::LogBatch(data) => self.logs_buffer.push_logs_data(data),
+            DispenserEvent::SpanBatch(data) => self.spans_buffer.push_traces_data(data),
+            DispenserEvent::ContainerOutput(e) => self.container_output_buffer.push(e),
         }
     }
 

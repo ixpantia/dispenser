@@ -29,15 +29,15 @@ impl ContainerOutputBuffer {
         }
     }
 
-    pub fn push(&mut self, event: &ContainerOutputEvent) {
+    pub fn push(&mut self, event: ContainerOutputEvent) {
         let date_days = (event.timestamp / (86400 * 1_000_000)) as i32;
 
         self.date.append_value(date_days);
         self.timestamp.append_value(event.timestamp);
-        self.service.append_value(&event.service);
-        self.container_id.append_value(&event.container_id);
-        self.stream.append_value(&event.stream);
-        self.message.append_value(&event.message);
+        self.service.append_value(event.service);
+        self.container_id.append_value(event.container_id);
+        self.stream.append_value(event.stream);
+        self.message.append_value(event.message);
         self.sequence.append_value(event.sequence);
 
         self.count += 1;

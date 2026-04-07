@@ -59,8 +59,8 @@ impl SpansBuffer {
         }
     }
 
-    pub fn push_traces_data(&mut self, data: &ExportTraceServiceRequest) {
-        for resource_span in &data.resource_spans {
+    pub fn push_traces_data(&mut self, data: ExportTraceServiceRequest) {
+        for resource_span in data.resource_spans {
             let mut service_name = "unknown".to_string();
 
             if let Some(resource) = &resource_span.resource {
@@ -69,14 +69,15 @@ impl SpansBuffer {
                         if let Some(v) = &kv.value {
                             if let Some(any_value::Value::StringValue(s)) = &v.value {
                                 service_name = s.clone();
+                                break;
                             }
                         }
                     }
                 }
             }
 
-            for scope_span in &resource_span.scope_spans {
-                for span in &scope_span.spans {
+            for scope_span in resource_span.scope_spans {
+                for span in scope_span.spans {
                     let start_nanos: i64 = span.start_time_unix_nano as i64;
                     let end_nanos: i64 = span.end_time_unix_nano as i64;
                     let start_micros = start_nanos / 1000;
@@ -93,7 +94,7 @@ impl SpansBuffer {
                             .iter()
                             .map(|b| format!("{:02x}", b))
                             .collect::<String>();
-                        self.trace_id.append_value(&trace_id_hex);
+                        self.trace_id.append_value(trace_id_hex);
                     }
 
                     if span.span_id.is_empty() {
@@ -104,7 +105,7 @@ impl SpansBuffer {
                             .iter()
                             .map(|b| format!("{:02x}", b))
                             .collect::<String>();
-                        self.span_id.append_value(&span_id_hex);
+                        self.span_id.append_value(span_id_hex);
                     }
 
                     if span.parent_span_id.is_empty() {
@@ -115,10 +116,10 @@ impl SpansBuffer {
                             .iter()
                             .map(|b| format!("{:02x}", b))
                             .collect::<String>();
-                        self.parent_span_id.append_value(&parent_span_id_hex);
+                        self.parent_span_id.append_value(parent_span_id_hex);
                     }
 
-                    self.name.append_value(&span.name);
+                    self.name.append_value(span.name);
 
                     let kind_str = match span.kind {
                         1 => "INTERNAL",
@@ -134,7 +135,7 @@ impl SpansBuffer {
                     self.end_time.append_value(end_micros);
                     self.duration_ms.append_value(duration_ms);
 
-                    if let Some(status) = &span.status {
+                    if let Some(status) = span.status {
                         let code_str = match status.code {
                             0 => "UNSET",
                             1 => "OK",
@@ -145,7 +146,7 @@ impl SpansBuffer {
                         if status.message.is_empty() {
                             self.status_message.append_null();
                         } else {
-                            self.status_message.append_value(&status.message);
+                            self.status_message.append_value(status.message);
                         }
                     } else {
                         self.status_code.append_null();
@@ -155,7 +156,7 @@ impl SpansBuffer {
                     self.service.append_value(&service_name);
 
                     // Attributes
-                    if let Some(json_str) = key_values_to_json(&span.attributes) {
+                    if let Some(json_str) = key_values_to_json(span.attributes) {
                         self.attributes.append_value(json_str);
                     } else {
                         self.attributes.append_null();
@@ -164,7 +165,7 @@ impl SpansBuffer {
                     // Events
                     if !span.events.is_empty() {
                         let struct_builder = self.events.values();
-                        for event in &span.events {
+                        for event in span.events {
                             let ts_micros = (event.time_unix_nano as i64) / 1000;
                             struct_builder
                                 .field_builder::<TimestampMicrosecondBuilder>(0)
@@ -173,8 +174,8 @@ impl SpansBuffer {
                             struct_builder
                                 .field_builder::<StringBuilder>(1)
                                 .unwrap()
-                                .append_value(&event.name);
-                            if let Some(json_str) = key_values_to_json(&event.attributes) {
+                                .append_value(event.name);
+                            if let Some(json_str) = key_values_to_json(event.attributes) {
                                 struct_builder
                                     .field_builder::<StringBuilder>(2)
                                     .unwrap()
@@ -260,7 +261,7 @@ mod tests {
 
         data.resource_spans.push(resource_spans);
 
-        buffer.push_traces_data(&data);
+        buffer.push_traces_data(data);
         assert_eq!(buffer.len(), 1);
 
         let batch = buffer.into_record_batch().unwrap();

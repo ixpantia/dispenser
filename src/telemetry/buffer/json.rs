@@ -1,35 +1,35 @@
 use opentelemetry_proto::tonic::common::v1::{any_value, KeyValue};
 use serde_json::{Map, Value as JsonValue};
 
-pub fn any_value_to_json(any_val: &any_value::Value) -> JsonValue {
+pub fn any_value_to_json(any_val: any_value::Value) -> JsonValue {
     match any_val {
         any_value::Value::StringValue(s) => JsonValue::String(s.clone()),
-        any_value::Value::IntValue(i) => JsonValue::Number((*i).into()),
+        any_value::Value::IntValue(i) => JsonValue::Number((i).into()),
         any_value::Value::DoubleValue(d) => {
-            if let Some(n) = serde_json::Number::from_f64(*d) {
+            if let Some(n) = serde_json::Number::from_f64(d) {
                 JsonValue::Number(n)
             } else {
                 JsonValue::Null
             }
         }
-        any_value::Value::BoolValue(b) => JsonValue::Bool(*b),
+        any_value::Value::BoolValue(b) => JsonValue::Bool(b),
         any_value::Value::ArrayValue(a) => {
             let vec: Vec<JsonValue> = a
                 .values
-                .iter()
-                .filter_map(|v| v.value.as_ref().map(any_value_to_json))
+                .into_iter()
+                .filter_map(|v| v.value.map(any_value_to_json))
                 .collect();
             JsonValue::Array(vec)
         }
         any_value::Value::KvlistValue(kv) => {
-            let mut map = Map::new();
-            for k in &kv.values {
-                if let Some(v) = &k.value {
-                    if let Some(val) = &v.value {
-                        map.insert(k.key.clone(), any_value_to_json(val));
-                    }
-                }
-            }
+            let map = kv
+                .values
+                .into_iter()
+                .filter_map(|kv | {
+                    Some((kv.key, any_value_to_json(kv.value?.value?)))
+                })
+                .collect();
+
             JsonValue::Object(map)
         }
         any_value::Value::BytesValue(b) => {
@@ -39,15 +39,15 @@ pub fn any_value_to_json(any_val: &any_value::Value) -> JsonValue {
     }
 }
 
-pub fn key_values_to_json(kvs: &[KeyValue]) -> Option<String> {
+pub fn key_values_to_json(kvs: Vec<KeyValue>) -> Option<String> {
     if kvs.is_empty() {
         return None;
     }
 
     let mut map = Map::new();
     for kv in kvs {
-        if let Some(v) = &kv.value {
-            if let Some(val) = &v.value {
+        if let Some(v) = kv.value {
+            if let Some(val) = v.value {
                 map.insert(kv.key.clone(), any_value_to_json(val));
             }
         }
@@ -64,42 +64,42 @@ mod tests {
     #[test]
     fn test_any_value_to_json() {
         assert_eq!(
-            any_value_to_json(&any_value::Value::StringValue("hello".to_string())),
+            any_value_to_json(any_value::Value::StringValue("hello".to_string())),
             JsonValue::String("hello".to_string())
         );
 
         assert_eq!(
-            any_value_to_json(&any_value::Value::IntValue(42)),
+            any_value_to_json(any_value::Value::IntValue(42)),
             JsonValue::Number(42.into())
         );
 
         assert_eq!(
-            any_value_to_json(&any_value::Value::DoubleValue(3.14)),
+            any_value_to_json(any_value::Value::DoubleValue(3.14)),
             JsonValue::Number(serde_json::Number::from_f64(3.14).unwrap())
         );
 
         assert_eq!(
-            any_value_to_json(&any_value::Value::DoubleValue(f64::NAN)),
+            any_value_to_json(any_value::Value::DoubleValue(f64::NAN)),
             JsonValue::Null
         );
 
         assert_eq!(
-            any_value_to_json(&any_value::Value::DoubleValue(f64::INFINITY)),
+            any_value_to_json(any_value::Value::DoubleValue(f64::INFINITY)),
             JsonValue::Null
         );
 
         assert_eq!(
-            any_value_to_json(&any_value::Value::DoubleValue(f64::NEG_INFINITY)),
+            any_value_to_json(any_value::Value::DoubleValue(f64::NEG_INFINITY)),
             JsonValue::Null
         );
 
         assert_eq!(
-            any_value_to_json(&any_value::Value::BoolValue(true)),
+            any_value_to_json(any_value::Value::BoolValue(true)),
             JsonValue::Bool(true)
         );
 
         assert_eq!(
-            any_value_to_json(&any_value::Value::BytesValue(vec![0xde, 0xad, 0xbe, 0xef])),
+            any_value_to_json(any_value::Value::BytesValue(vec![0xde, 0xad, 0xbe, 0xef])),
             JsonValue::String("deadbeef".to_string())
         );
 
@@ -115,7 +115,7 @@ mod tests {
             ],
         });
         assert_eq!(
-            any_value_to_json(&array_val),
+            any_value_to_json(array_val),
             JsonValue::Array(vec![
                 JsonValue::Number(1.into()),
                 JsonValue::String("two".to_string()),
@@ -142,12 +142,12 @@ mod tests {
         });
         let mut expected_map = Map::new();
         expected_map.insert("key1".to_string(), JsonValue::Bool(false));
-        assert_eq!(any_value_to_json(&kv_val), JsonValue::Object(expected_map));
+        assert_eq!(any_value_to_json(kv_val), JsonValue::Object(expected_map));
     }
 
     #[test]
     fn test_key_values_to_json() {
-        assert_eq!(key_values_to_json(&[]), None);
+        assert_eq!(key_values_to_json(vec![]), None);
 
         let kvs = vec![
             KeyValue {
@@ -172,7 +172,7 @@ mod tests {
             },
         ];
 
-        let json_str = key_values_to_json(&kvs).unwrap();
+        let json_str = key_values_to_json(kvs).unwrap();
         let parsed: JsonValue = serde_json::from_str(&json_str).unwrap();
 
         let mut expected_map = Map::new();

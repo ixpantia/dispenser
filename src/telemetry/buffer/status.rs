@@ -42,13 +42,13 @@ impl StatusBuffer {
         }
     }
 
-    pub fn push(&mut self, event: &ContainerStatusEvent) {
+    pub fn push(&mut self, event: ContainerStatusEvent) {
         let date_days = (event.timestamp / (86400 * 1_000_000)) as i32;
 
         self.date.append_value(date_days);
         self.timestamp.append_value(event.timestamp);
-        self.service.append_value(&event.service);
-        self.container_id.append_value(&event.container_id);
+        self.service.append_value(event.service);
+        self.container_id.append_value(event.container_id);
         self.state.append_value(event.state.as_ref());
         self.health_status
             .append_value(event.health_status.as_ref());
@@ -63,7 +63,7 @@ impl StatusBuffer {
         self.uptime_seconds.append_value(event.uptime_seconds);
         self.failing_streak.append_value(event.failing_streak);
 
-        if let Some(val) = &event.last_health_output {
+        if let Some(val) = event.last_health_output {
             self.last_health_output.append_value(val);
         } else {
             self.last_health_output.append_null();

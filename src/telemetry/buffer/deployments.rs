@@ -56,21 +56,21 @@ impl DeploymentsBuffer {
         }
     }
 
-    pub fn push(&mut self, event: &DeploymentEvent) {
+    pub fn push(&mut self, event: DeploymentEvent) {
         let date_days = (event.timestamp / (86400 * 1_000_000)) as i32;
 
         self.date.append_value(date_days);
         self.timestamp.append_value(event.timestamp);
-        self.service.append_value(&event.service);
-        self.image.append_value(&event.image);
-        self.image_sha.append_value(&event.image_sha);
+        self.service.append_value(event.service);
+        self.image.append_value(event.image);
+        self.image_sha.append_value(event.image_sha);
         self.image_size_mb.append_value(event.image_size_mb);
-        self.container_id.append_value(&event.container_id);
+        self.container_id.append_value(event.container_id);
         self.container_created_at
             .append_value(event.container_created_at);
         self.trigger_type.append_value(event.trigger_type.as_ref());
         self.dispenser_version
-            .append_value(&event.dispenser_version);
+            .append_value(event.dispenser_version);
 
         let restart_policy_str = match event.restart_policy {
             crate::service::file::Restart::Always => "always",
@@ -80,13 +80,13 @@ impl DeploymentsBuffer {
         };
         self.restart_policy.append_value(restart_policy_str);
 
-        if let Some(val) = &event.memory_limit {
+        if let Some(val) = event.memory_limit {
             self.memory_limit.append_value(val);
         } else {
             self.memory_limit.append_null();
         }
 
-        if let Some(val) = &event.cpu_limit {
+        if let Some(val) = event.cpu_limit {
             self.cpu_limit.append_value(val);
         } else {
             self.cpu_limit.append_null();
@@ -94,7 +94,7 @@ impl DeploymentsBuffer {
 
         self.proxy_enabled.append_value(event.proxy_enabled);
 
-        if let Some(val) = &event.proxy_host {
+        if let Some(val) = event.proxy_host {
             self.proxy_host.append_value(val);
         } else {
             self.proxy_host.append_null();

@@ -35,26 +35,27 @@ impl LogsBuffer {
         }
     }
 
-    pub fn push_logs_data(&mut self, data: &ExportLogsServiceRequest) {
-        for resource_log in &data.resource_logs {
+    pub fn push_logs_data(&mut self, data: ExportLogsServiceRequest) {
+        for resource_log in data.resource_logs {
             let mut service_name = "unknown".to_string();
             let mut resource_json = None;
 
-            if let Some(resource) = &resource_log.resource {
+            if let Some(resource) = resource_log.resource {
                 for kv in &resource.attributes {
                     if kv.key == "service.name" {
                         if let Some(v) = &kv.value {
                             if let Some(any_value::Value::StringValue(s)) = &v.value {
                                 service_name = s.clone();
+                                break;
                             }
                         }
                     }
                 }
-                resource_json = key_values_to_json(&resource.attributes);
+                resource_json = key_values_to_json(resource.attributes);
             }
 
-            for scope_log in &resource_log.scope_logs {
-                for record in &scope_log.log_records {
+            for scope_log in resource_log.scope_logs {
+                for record in scope_log.log_records {
                     let timestamp_nanos: i64 = record.time_unix_nano as i64;
                     let timestamp_micros = timestamp_nanos / 1000;
                     let date_days = (timestamp_micros / (86400 * 1_000_000)) as i32;
@@ -68,8 +69,8 @@ impl LogsBuffer {
                         self.severity.append_value(&record.severity_text);
                     }
 
-                    if let Some(body) = &record.body {
-                        match &body.value {
+                    if let Some(body) = record.body {
+                        match body.value {
                             Some(any_value::Value::StringValue(s)) => self.body.append_value(s),
                             Some(any_value::Value::IntValue(i)) => {
                                 self.body.append_value(i.to_string())
@@ -119,7 +120,7 @@ impl LogsBuffer {
                     }
 
                     // Attributes
-                    if let Some(json_str) = key_values_to_json(&record.attributes) {
+                    if let Some(json_str) = key_values_to_json(record.attributes) {
                         self.attributes.append_value(json_str);
                     } else {
                         self.attributes.append_null();
@@ -210,7 +211,7 @@ mod tests {
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
 
-        buffer.push_logs_data(&data);
+        buffer.push_logs_data(data);
 
         assert!(!buffer.is_empty());
         assert_eq!(buffer.len(), 1);
