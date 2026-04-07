@@ -9,12 +9,12 @@ use super::schema::{
 use crate::service::file::TelemetryConfig;
 use deltalake::{DeltaTable, DeltaTableError};
 use log::{error, info, warn};
-use url::Url;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
+use url::Url;
 
-const DEFAULT_BUFFER_SIZE: usize = 1000;
-const FLUSH_INTERVAL: Duration = Duration::from_secs(60); // 1 minute
+const DEFAULT_BUFFER_SIZE: usize = 500;
+const FLUSH_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
 
 pub struct TelemetryService {
     config: TelemetryConfig,
@@ -33,11 +33,11 @@ impl TelemetryService {
         Self {
             config,
             rx,
-            deployments_buffer: DeploymentsBuffer::new(buffer_limit),
-            status_buffer: StatusBuffer::new(buffer_limit),
-            logs_buffer: LogsBuffer::new(buffer_limit * 10), // Logs and spans can be higher volume
-            spans_buffer: SpansBuffer::new(buffer_limit * 10),
-            container_output_buffer: ContainerOutputBuffer::new(buffer_limit * 10),
+            deployments_buffer: DeploymentsBuffer::new(64),
+            status_buffer: StatusBuffer::new(64),
+            logs_buffer: LogsBuffer::new(64), // Small initial capacity to prevent fragmentation
+            spans_buffer: SpansBuffer::new(64),
+            container_output_buffer: ContainerOutputBuffer::new(64),
             buffer_limit,
         }
     }
@@ -116,9 +116,9 @@ impl TelemetryService {
     fn should_flush(&self) -> bool {
         self.deployments_buffer.len() >= self.buffer_limit
             || self.status_buffer.len() >= self.buffer_limit
-            || self.logs_buffer.len() >= self.buffer_limit * 10
-            || self.spans_buffer.len() >= self.buffer_limit * 10
-            || self.container_output_buffer.len() >= self.buffer_limit * 10
+            || self.logs_buffer.len() >= self.buffer_limit
+            || self.spans_buffer.len() >= self.buffer_limit
+            || self.container_output_buffer.len() >= self.buffer_limit
     }
 
     async fn flush(&mut self) {
@@ -127,10 +127,8 @@ impl TelemetryService {
         // Flush Deployments
         if !self.deployments_buffer.is_empty() {
             let count = self.deployments_buffer.len();
-            let old_buffer = std::mem::replace(
-                &mut self.deployments_buffer,
-                DeploymentsBuffer::new(self.buffer_limit),
-            );
+            let old_buffer =
+                std::mem::replace(&mut self.deployments_buffer, DeploymentsBuffer::new(64));
 
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
@@ -154,10 +152,7 @@ impl TelemetryService {
         // Flush Status
         if !self.status_buffer.is_empty() {
             let count = self.status_buffer.len();
-            let old_buffer = std::mem::replace(
-                &mut self.status_buffer,
-                StatusBuffer::new(self.buffer_limit),
-            );
+            let old_buffer = std::mem::replace(&mut self.status_buffer, StatusBuffer::new(64));
 
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
@@ -177,10 +172,7 @@ impl TelemetryService {
         // Flush Logs
         if !self.logs_buffer.is_empty() {
             let count = self.logs_buffer.len();
-            let old_buffer = std::mem::replace(
-                &mut self.logs_buffer,
-                LogsBuffer::new(self.buffer_limit * 10),
-            );
+            let old_buffer = std::mem::replace(&mut self.logs_buffer, LogsBuffer::new(64));
 
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
@@ -200,10 +192,7 @@ impl TelemetryService {
         // Flush Spans
         if !self.spans_buffer.is_empty() {
             let count = self.spans_buffer.len();
-            let old_buffer = std::mem::replace(
-                &mut self.spans_buffer,
-                SpansBuffer::new(self.buffer_limit * 10),
-            );
+            let old_buffer = std::mem::replace(&mut self.spans_buffer, SpansBuffer::new(64));
 
             match old_buffer.into_record_batch() {
                 Ok(batch) => {
@@ -225,7 +214,7 @@ impl TelemetryService {
             let count = self.container_output_buffer.len();
             let old_buffer = std::mem::replace(
                 &mut self.container_output_buffer,
-                ContainerOutputBuffer::new(self.buffer_limit * 10),
+                ContainerOutputBuffer::new(64),
             );
 
             match old_buffer.into_record_batch() {

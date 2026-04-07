@@ -214,11 +214,23 @@ impl ServiceInstance {
                             if line.is_empty() {
                                 continue;
                             }
+
+                            // Cap log messages to 4KB to prevent memory exhaustion
+                            let truncated_line = if line.len() > 4096 {
+                                let mut end = 4096;
+                                while !line.is_char_boundary(end) {
+                                    end -= 1;
+                                }
+                                format!("{}...[TRUNCATED]", &line[..end])
+                            } else {
+                                line.to_string()
+                            };
+
                             telemetry.track_container_output(
                                 service_name.clone(),
                                 container_name.clone(),
                                 stream.to_string(),
-                                line.to_string(),
+                                truncated_line,
                             );
                         }
                     }

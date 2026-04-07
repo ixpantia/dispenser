@@ -74,23 +74,26 @@ pub async fn create_traces_table(table_uri: &Url) -> Result<DeltaTable, DeltaTab
         StructField::new(
             "events",
             DeltaDataType::Array(Box::new(ArrayType::new(
-                DeltaDataType::Struct(Box::new(StructType::try_new(vec![
-                    StructField::new(
-                        "timestamp",
-                        DeltaDataType::Primitive(PrimitiveType::Timestamp),
-                        false,
-                    ),
-                    StructField::new(
-                        "name",
-                        DeltaDataType::Primitive(PrimitiveType::String),
-                        false,
-                    ),
-                    StructField::new(
-                        "attributes",
-                        DeltaDataType::Primitive(PrimitiveType::String),
-                        true,
-                    ),
-                ]).expect("Schema must always be valid"))),
+                DeltaDataType::Struct(Box::new(
+                    StructType::try_new(vec![
+                        StructField::new(
+                            "timestamp",
+                            DeltaDataType::Primitive(PrimitiveType::Timestamp),
+                            false,
+                        ),
+                        StructField::new(
+                            "name",
+                            DeltaDataType::Primitive(PrimitiveType::String),
+                            false,
+                        ),
+                        StructField::new(
+                            "attributes",
+                            DeltaDataType::Primitive(PrimitiveType::String),
+                            true,
+                        ),
+                    ])
+                    .expect("Schema must always be valid"),
+                )),
                 true,
             ))),
             true,

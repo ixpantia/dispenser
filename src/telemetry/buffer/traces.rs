@@ -235,18 +235,18 @@ impl SpansBuffer {
 mod tests {
     use super::*;
     use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
-    use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, span::Event, Span};
+    use opentelemetry_proto::tonic::trace::v1::{span::Event, ResourceSpans, ScopeSpans, Span};
 
     #[test]
     fn test_push_traces_data() {
         let mut buffer = SpansBuffer::new(10);
         let mut data = ExportTraceServiceRequest::default();
-        
+
         let mut span = Span::default();
         span.trace_id = vec![1, 2, 3, 4];
         span.span_id = vec![5, 6, 7, 8];
         span.name = "test_span".to_string();
-        
+
         let mut event = Event::default();
         event.time_unix_nano = 1000000;
         event.name = "test_event".to_string();

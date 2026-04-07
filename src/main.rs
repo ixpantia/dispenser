@@ -220,7 +220,7 @@ fn init_telemetry(config: Option<&TelemetryConfig>) -> Option<TelemetryClient> {
         return None;
     }
 
-    let (tx, rx) = tokio::sync::mpsc::channel(10000);
+    let (tx, rx) = tokio::sync::mpsc::channel(1000);
     let config = telemetry_config.clone();
 
     // Run ingestion service on main tokio runtime
@@ -231,18 +231,10 @@ fn init_telemetry(config: Option<&TelemetryConfig>) -> Option<TelemetryClient> {
         }
     });
 
-    // Telemetry Service runs in its own thread/runtime for Delta Lake operations
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("Failed to build telemetry runtime");
-
-        rt.block_on(async {
-            let service = TelemetryService::new(config, rx);
-            service.run().await;
-        });
+    // Telemetry Service runs on the main tokio runtime
+    tokio::spawn(async move {
+        let service = TelemetryService::new(config, rx);
+        service.run().await;
     });
 
     Some(TelemetryClient::new(tx))
