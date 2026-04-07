@@ -1,34 +1,33 @@
-use super::events::{ContainerOutputEvent, ContainerStatusEvent, DeploymentEvent, DispenserEvent};
+use super::events::{ContainerOutputEvent, ContainerStatusEvent, DeploymentEvent};
 use super::types::{ContainerState, HealthStatus, TriggerType};
 use crate::service::instance::ServiceInstance;
-use log::error;
+use crate::telemetry::service::TelemetryBuffers;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct TelemetryClient {
-    tx: Sender<DispenserEvent>,
+    pub buffers: Arc<TelemetryBuffers>,
     container_output_sequence: Arc<AtomicI64>,
 }
 
 impl TelemetryClient {
-    pub fn new(tx: Sender<DispenserEvent>) -> Self {
+    pub fn new(buffers: Arc<TelemetryBuffers>) -> Self {
         Self {
-            tx,
+            buffers,
             container_output_sequence: Arc::new(AtomicI64::new(0)),
         }
     }
 
-    pub fn track_deployment(
+    pub async fn track_deployment(
         &self,
         service: &ServiceInstance,
-        container_id: String,
-        image_sha: String,
+        container_id: &str,
+        image_sha: &str,
         image_size_mb: i64,
         trigger_type: TriggerType,
-        dispenser_version: String,
+        dispenser_version: &str,
         container_created_at: i64,
     ) {
         let now = chrono::Utc::now();
@@ -40,38 +39,38 @@ impl TelemetryClient {
         let event = DeploymentEvent {
             event_id: Uuid::now_v7(),
             timestamp,
-            service: svc_entry.name.clone(),
-            image: svc_entry.image.name.to_string(),
+            service: &svc_entry.name,
+            image: &svc_entry.image.name,
             image_sha,
             image_size_mb,
             container_id,
             container_created_at,
             trigger_type,
             dispenser_version,
-            restart_policy: svc_entry.restart.clone(),
-            memory_limit: svc_entry.memory.clone(),
-            cpu_limit: svc_entry.cpus.clone(),
+            restart_policy: svc_entry.restart,
+            memory_limit: svc_entry.memory.as_deref(),
+            cpu_limit: svc_entry.cpus.as_deref(),
             proxy_enabled: config.proxy.is_some(),
-            proxy_host: config.proxy.as_ref().map(|p| p.host.clone()),
+            proxy_host: config.proxy.as_ref().map(|p| p.host.as_str()),
             port_mappings_count: config.ports.len() as i32,
             volume_count: config.volume.len() as i32,
             network_count: config.network.len() as i32,
         };
 
-        self.send(DispenserEvent::Deployment(Box::new(event)));
+        self.buffers.push_deployments_event(event).await
     }
 
-    pub fn track_status(
+    pub async fn track_status(
         &self,
-        service_name: String,
-        container_id: String,
+        service_name: &str,
+        container_id: &str,
         state: ContainerState,
         health_status: HealthStatus,
         exit_code: Option<i32>,
         restart_count: i32,
         uptime_seconds: i64,
         failing_streak: i32,
-        last_health_output: Option<String>,
+        last_health_output: Option<&str>,
     ) {
         let now = chrono::Utc::now();
         let timestamp = now.timestamp_micros();
@@ -90,15 +89,15 @@ impl TelemetryClient {
             last_health_output,
         };
 
-        self.send(DispenserEvent::ContainerStatus(Box::new(event)));
+        self.buffers.push_status_event(event).await
     }
 
-    pub fn track_container_output(
+    pub async fn track_container_output(
         &self,
-        service_name: String,
-        container_id: String,
-        stream: String,
-        message: String,
+        service_name: &str,
+        container_id: &str,
+        stream: &str,
+        message: &str,
     ) {
         let now = chrono::Utc::now();
         let timestamp = now.timestamp_micros();
@@ -116,17 +115,6 @@ impl TelemetryClient {
             sequence,
         };
 
-        self.send(DispenserEvent::ContainerOutput(event));
-    }
-
-    fn send(&self, event: DispenserEvent) {
-        // Use try_send to avoid blocking the main loop.
-        // If the channel is full, we drop the event and log an error.
-        if let Err(e) = self.tx.try_send(event) {
-            error!(
-                "Failed to send telemetry event (channel full or closed): {:?}",
-                e
-            );
-        }
+        self.buffers.push_container_output(event).await
     }
 }

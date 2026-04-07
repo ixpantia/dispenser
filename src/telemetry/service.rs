@@ -1,12 +1,12 @@
 use super::buffer::{
     ContainerOutputBuffer, DeploymentsBuffer, LogsBuffer, SpansBuffer, StatusBuffer,
 };
-use super::events::DispenserEvent;
 use super::schema::{
     create_container_output_table, create_deployments_table, create_logs_table,
     create_status_table, create_traces_table,
 };
 use crate::service::file::TelemetryConfig;
+use crate::telemetry::events::{ContainerOutputEvent, ContainerStatusEvent, DeploymentEvent};
 use deltalake::datafusion::catalog::Session;
 use deltalake::datafusion::execution::disk_manager::DiskManagerMode;
 use deltalake::datafusion::execution::memory_pool::FairSpillPool;
@@ -15,33 +15,70 @@ use deltalake::datafusion::execution::DiskManager;
 use deltalake::delta_datafusion::DeltaSessionContext;
 use deltalake::{DeltaTable, DeltaTableError};
 use log::{error, info, warn};
+use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::Mutex;
 use url::Url;
 
-const DEFAULT_BUFFER_SIZE: usize = 500;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
+
+pub struct TelemetryBuffers {
+    deployments_buffer: Mutex<DeploymentsBuffer>,
+    status_buffer: Mutex<StatusBuffer>,
+    logs_buffer: Mutex<LogsBuffer>,
+    spans_buffer: Mutex<SpansBuffer>,
+    container_output_buffer: Mutex<ContainerOutputBuffer>,
+}
+
+impl std::fmt::Debug for TelemetryBuffers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TelemetryBuffers")
+    }
+}
+
+impl TelemetryBuffers {
+    pub fn new() -> Self {
+        TelemetryBuffers {
+            deployments_buffer: Mutex::new(DeploymentsBuffer::new(64)),
+            status_buffer: Mutex::new(StatusBuffer::new(64)),
+            logs_buffer: Mutex::new(LogsBuffer::new(64)), // Small initial capacity to prevent fragmentation
+            spans_buffer: Mutex::new(SpansBuffer::new(64)),
+            container_output_buffer: Mutex::new(ContainerOutputBuffer::new(64)),
+        }
+    }
+}
+
+impl TelemetryBuffers {
+    pub async fn push_deployments_event<'a>(&self, event: DeploymentEvent<'a>) {
+        self.deployments_buffer.lock().await.push(event);
+    }
+    pub async fn push_status_event<'a>(&self, event: ContainerStatusEvent<'a>) {
+        self.status_buffer.lock().await.push(event);
+    }
+    pub async fn push_logs_event(&self, events: ExportLogsServiceRequest) {
+        self.logs_buffer.lock().await.push_logs_data(events);
+    }
+    pub async fn push_span(&self, event: ExportTraceServiceRequest) {
+        self.spans_buffer.lock().await.push_traces_data(event);
+    }
+    pub async fn push_container_output<'a>(&self, event: ContainerOutputEvent<'a>) {
+        self.container_output_buffer.lock().await.push(event);
+    }
+}
 
 pub struct TelemetryService {
     config: TelemetryConfig,
-    rx: Receiver<DispenserEvent>,
     datafusion_session_state: Arc<dyn Session>,
-    deployments_buffer: DeploymentsBuffer,
-    status_buffer: StatusBuffer,
-    logs_buffer: LogsBuffer,
-    spans_buffer: SpansBuffer,
-    container_output_buffer: ContainerOutputBuffer,
-    buffer_limit: usize,
+    buffers: Arc<TelemetryBuffers>,
 }
 
 /// 10MB
 const POOL_SIZE: usize = 10 * 1024 * 1024;
 
 impl TelemetryService {
-    pub fn new(config: TelemetryConfig, rx: Receiver<DispenserEvent>) -> Self {
-        let buffer_limit = config.buffer_size.unwrap_or(DEFAULT_BUFFER_SIZE);
-
+    pub fn new(config: TelemetryConfig, buffers: Arc<TelemetryBuffers>) -> Self {
         let memory_pool = Arc::new(FairSpillPool::new(POOL_SIZE));
 
         let disk_manager = DiskManager::builder().with_mode(DiskManagerMode::OsTmpDirectory);
@@ -59,17 +96,135 @@ impl TelemetryService {
         Self {
             config,
             datafusion_session_state,
-            rx,
-            deployments_buffer: DeploymentsBuffer::new(64),
-            status_buffer: StatusBuffer::new(64),
-            logs_buffer: LogsBuffer::new(64), // Small initial capacity to prevent fragmentation
-            spans_buffer: SpansBuffer::new(64),
-            container_output_buffer: ContainerOutputBuffer::new(64),
-            buffer_limit,
+            buffers,
         }
     }
 
-    pub async fn run(mut self) {
+    pub async fn flush_deployments_buffer(&self) {
+        let mut deployments_buffer = self.buffers.deployments_buffer.lock().await;
+        if !deployments_buffer.is_empty() {
+            let count = deployments_buffer.len();
+
+            match deployments_buffer.into_record_batch() {
+                Ok(batch) => {
+                    drop(deployments_buffer);
+                    if let Err(e) = self
+                        .write_to_delta(
+                            &self.config.table_uri_deployments(),
+                            batch,
+                            TableType::Deployments,
+                        )
+                        .await
+                    {
+                        error!("Failed to write deployment events to Delta Lake: {:?}", e);
+                    } else {
+                        info!("Flushed {} deployment events to Delta Lake", count);
+                    }
+                }
+                Err(e) => error!("Failed to create record batch for deployments: {:?}", e),
+            }
+        }
+    }
+
+    pub async fn flush_status_buffer(&self) {
+        let mut status_buffer = self.buffers.status_buffer.lock().await;
+        if !status_buffer.is_empty() {
+            let count = status_buffer.len();
+
+            match status_buffer.into_record_batch() {
+                Ok(batch) => {
+                    drop(status_buffer);
+                    if let Err(e) = self
+                        .write_to_delta(&self.config.table_uri_status(), batch, TableType::Status)
+                        .await
+                    {
+                        error!("Failed to write status events to Delta Lake: {:?}", e);
+                    } else {
+                        info!("Flushed {} status events to Delta Lake", count);
+                    }
+                }
+                Err(e) => error!("Failed to create record batch for status: {:?}", e),
+            }
+        }
+    }
+
+    pub async fn flush_logs_buffer(&self) {
+        let mut logs_buffer = self.buffers.logs_buffer.lock().await;
+        if !logs_buffer.is_empty() {
+            let count = logs_buffer.len();
+
+            match logs_buffer.into_record_batch() {
+                Ok(batch) => {
+                    drop(logs_buffer);
+                    if let Err(e) = self
+                        .write_to_delta(&self.config.table_uri_logs(), batch, TableType::Logs)
+                        .await
+                    {
+                        error!("Failed to write log events to Delta Lake: {:?}", e);
+                    } else {
+                        info!("Flushed {} log events to Delta Lake", count);
+                    }
+                }
+                Err(e) => error!("Failed to create record batch for logs: {:?}", e),
+            }
+        }
+    }
+
+    pub async fn flush_spans_buffer(&self) {
+        let mut spans_buffer = self.buffers.spans_buffer.lock().await;
+        if !spans_buffer.is_empty() {
+            let count = spans_buffer.len();
+
+            match spans_buffer.into_record_batch() {
+                Ok(batch) => {
+                    drop(spans_buffer);
+                    if let Err(e) = self
+                        .write_to_delta(&self.config.table_uri_traces(), batch, TableType::Traces)
+                        .await
+                    {
+                        error!("Failed to write trace events to Delta Lake: {:?}", e);
+                    } else {
+                        info!("Flushed {} trace events to Delta Lake", count);
+                    }
+                }
+                Err(e) => error!("Failed to create record batch for traces: {:?}", e),
+            }
+        }
+    }
+
+    pub async fn flush_container_output_buffer(&self) {
+        let mut container_output_buffer = self.buffers.container_output_buffer.lock().await;
+        if !container_output_buffer.is_empty() {
+            let count = container_output_buffer.len();
+
+            match container_output_buffer.into_record_batch() {
+                Ok(batch) => {
+                    drop(container_output_buffer);
+                    if let Err(e) = self
+                        .write_to_delta(
+                            &self.config.table_uri_container_output(),
+                            batch,
+                            TableType::ContainerOutput,
+                        )
+                        .await
+                    {
+                        error!(
+                            "Failed to write container output events to Delta Lake: {:?}",
+                            e
+                        );
+                    } else {
+                        info!("Flushed {} container output events to Delta Lake", count);
+                    }
+                }
+                Err(e) => error!(
+                    "Failed to create record batch for container output: {:?}",
+                    e
+                ),
+            }
+        }
+    }
+
+    pub async fn run(self, shutdown_signal: Arc<tokio::sync::Notify>) {
         info!("Telemetry service started");
 
         // Ensure tables exist on startup
@@ -100,165 +255,29 @@ impl TelemetryService {
 
         loop {
             tokio::select! {
-                maybe_event = self.rx.recv() => {
-                    match maybe_event {
-                        Some(event) => {
-                            self.handle_event(event);
-                            if self.should_flush() {
-                                self.flush().await;
-                            }
-                        }
-                        None => {
-                            info!("Telemetry channel closed, flushing remaining events");
-                            self.flush().await;
-                            break;
-                        }
-                    }
+                _ = shutdown_signal.notified() => {
+                    info!("Telemetry service received shutdown signal");
+                    break;
                 }
                 _ = flush_interval.tick() => {
-                    if !self.deployments_buffer.is_empty()
-                        || !self.status_buffer.is_empty()
-                        || !self.logs_buffer.is_empty()
-                        || !self.spans_buffer.is_empty()
-                        || !self.container_output_buffer.is_empty()
-                    {
-                        self.flush().await;
-                    }
+                    self.flush().await;
                 }
             }
         }
+
+        info!("Telemetry service performing final flush...");
+        self.flush().await;
         info!("Telemetry service stopped");
     }
 
-    fn handle_event(&mut self, event: DispenserEvent) {
-        match event {
-            DispenserEvent::Deployment(e) => self.deployments_buffer.push(*e),
-            DispenserEvent::ContainerStatus(e) => self.status_buffer.push(*e),
-            DispenserEvent::LogBatch(data) => self.logs_buffer.push_logs_data(data),
-            DispenserEvent::SpanBatch(data) => self.spans_buffer.push_traces_data(data),
-            DispenserEvent::ContainerOutput(e) => self.container_output_buffer.push(e),
-        }
-    }
-
-    fn should_flush(&self) -> bool {
-        self.deployments_buffer.len() >= self.buffer_limit
-            || self.status_buffer.len() >= self.buffer_limit
-            || self.logs_buffer.len() >= self.buffer_limit
-            || self.spans_buffer.len() >= self.buffer_limit
-            || self.container_output_buffer.len() >= self.buffer_limit
-    }
-
-    async fn flush(&mut self) {
+    async fn flush(&self) {
         let start = Instant::now();
 
-        // Flush Deployments
-        if !self.deployments_buffer.is_empty() {
-            let count = self.deployments_buffer.len();
-
-            match self.deployments_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(
-                            &self.config.table_uri_deployments(),
-                            batch,
-                            TableType::Deployments,
-                        )
-                        .await
-                    {
-                        error!("Failed to write deployment events to Delta Lake: {:?}", e);
-                    } else {
-                        info!("Flushed {} deployment events to Delta Lake", count);
-                    }
-                }
-                Err(e) => error!("Failed to create record batch for deployments: {:?}", e),
-            }
-        }
-
-        // Flush Status
-        if !self.status_buffer.is_empty() {
-            let count = self.status_buffer.len();
-
-            match self.status_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_status(), batch, TableType::Status)
-                        .await
-                    {
-                        error!("Failed to write status events to Delta Lake: {:?}", e);
-                    } else {
-                        info!("Flushed {} status events to Delta Lake", count);
-                    }
-                }
-                Err(e) => error!("Failed to create record batch for status: {:?}", e),
-            }
-        }
-
-        // Flush Logs
-        if !self.logs_buffer.is_empty() {
-            let count = self.logs_buffer.len();
-
-            match self.logs_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_logs(), batch, TableType::Logs)
-                        .await
-                    {
-                        error!("Failed to write log events to Delta Lake: {:?}", e);
-                    } else {
-                        info!("Flushed {} log events to Delta Lake", count);
-                    }
-                }
-                Err(e) => error!("Failed to create record batch for logs: {:?}", e),
-            }
-        }
-
-        // Flush Spans
-        if !self.spans_buffer.is_empty() {
-            let count = self.spans_buffer.len();
-
-            match self.spans_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_traces(), batch, TableType::Traces)
-                        .await
-                    {
-                        error!("Failed to write trace events to Delta Lake: {:?}", e);
-                    } else {
-                        info!("Flushed {} trace events to Delta Lake", count);
-                    }
-                }
-                Err(e) => error!("Failed to create record batch for traces: {:?}", e),
-            }
-        }
-
-        // Flush Container Output
-        if !self.container_output_buffer.is_empty() {
-            let count = self.container_output_buffer.len();
-
-            match self.container_output_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(
-                            &self.config.table_uri_container_output(),
-                            batch,
-                            TableType::ContainerOutput,
-                        )
-                        .await
-                    {
-                        error!(
-                            "Failed to write container output events to Delta Lake: {:?}",
-                            e
-                        );
-                    } else {
-                        info!("Flushed {} container output events to Delta Lake", count);
-                    }
-                }
-                Err(e) => error!(
-                    "Failed to create record batch for container output: {:?}",
-                    e
-                ),
-            }
-        }
+        self.flush_deployments_buffer().await;
+        self.flush_status_buffer().await;
+        self.flush_logs_buffer().await;
+        self.flush_spans_buffer().await;
+        self.flush_container_output_buffer().await;
 
         let duration = start.elapsed();
         if duration.as_secs() > 1 {

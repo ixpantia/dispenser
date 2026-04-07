@@ -9,7 +9,7 @@ use crate::{
         manager::{ServiceMangerConfig, ServicesManager},
         vars::ServiceConfigError,
     },
-    telemetry::{TelemetryClient, TelemetryService},
+    telemetry::{service::TelemetryBuffers, TelemetryClient, TelemetryService},
 };
 
 mod cli;
@@ -91,8 +91,10 @@ async fn main() -> ExitCode {
         }
     };
 
-    let telemetry_client =
-        init_telemetry(service_manager_config.entrypoint_file.telemetry.as_ref());
+    let (telemetry_client, telemetry_done) = init_telemetry(
+        service_manager_config.entrypoint_file.telemetry.as_ref(),
+        shutdown_signal.clone(),
+    );
 
     let manager =
         match ServicesManager::from_config(service_manager_config, None, telemetry_client.clone())
@@ -204,6 +206,9 @@ async fn main() -> ExitCode {
 
                     proxy_signals.send_signal(pingora::server::ShutdownSignal::GracefulTerminate).await;
 
+                    log::info!("Waiting for telemetry service to flush...");
+                    telemetry_done.notified().await;
+
                     let _ = tokio::fs::remove_file(&cli::get_cli_args().pid_file).await;
 
                     // Exit the process
@@ -214,36 +219,61 @@ async fn main() -> ExitCode {
     }
 }
 
-fn init_telemetry(config: Option<&TelemetryConfig>) -> Option<TelemetryClient> {
-    let telemetry_config = config?;
-    if !telemetry_config.enabled {
-        return None;
-    }
+fn init_telemetry(
+    config: Option<&TelemetryConfig>,
+    shutdown_signal: Arc<Notify>,
+) -> (Option<TelemetryClient>, Arc<Notify>) {
+    let telemetry_done = Arc::new(Notify::new());
 
-    let (tx, rx) = tokio::sync::mpsc::channel(10000);
+    let telemetry_config = match config {
+        Some(c) if c.enabled => c,
+        _ => {
+            telemetry_done.notify_one();
+            return (None, telemetry_done);
+        }
+    };
+
     let config = telemetry_config.clone();
+    let telemetry_buffers = Arc::new(TelemetryBuffers::new());
 
     // Run ingestion service on main tokio runtime
-    let tx_ingestion = tx.clone();
-    tokio::spawn(async move {
-        if let Err(e) = crate::telemetry::ingestion::start_ingestion_service(tx_ingestion).await {
-            log::error!("OTLP ingestion service failed: {}", e);
+    tokio::spawn({
+        let telemetry_buffers = Arc::clone(&telemetry_buffers);
+        let shutdown_signal = shutdown_signal.clone();
+        async move {
+            if let Err(e) = crate::telemetry::ingestion::start_ingestion_service(
+                telemetry_buffers,
+                shutdown_signal,
+            )
+            .await
+            {
+                log::error!("OTLP ingestion service failed: {}", e);
+            }
         }
     });
 
     // Telemetry Service runs in its own thread/runtime for Delta Lake operations
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .expect("Failed to build telemetry runtime");
+    let telemetry_done_clone = telemetry_done.clone();
+    std::thread::spawn({
+        let telemetry_buffers = Arc::clone(&telemetry_buffers);
+        let shutdown_signal = shutdown_signal.clone();
+        move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("Failed to build telemetry runtime");
 
-        rt.block_on(async {
-            let service = TelemetryService::new(config, rx);
-            service.run().await;
-        });
+            rt.block_on(async {
+                let service = TelemetryService::new(config, telemetry_buffers.clone());
+                service.run(shutdown_signal).await;
+                telemetry_done_clone.notify_one();
+            });
+        }
     });
 
-    Some(TelemetryClient::new(tx))
+    (
+        Some(TelemetryClient::new(telemetry_buffers)),
+        telemetry_done,
+    )
 }

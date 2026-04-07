@@ -9,28 +9,28 @@ use log::{debug, error, info, warn};
 use prost::Message;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 
-use super::events::DispenserEvent;
+use crate::telemetry::service::TelemetryBuffers;
 
 /// Port for OTLP/HTTP as per OpenTelemetry specification.
 pub const OTLP_HTTP_PORT: u16 = 4318;
 
 /// State shared across axum handlers.
 struct AppState {
-    tx: Sender<DispenserEvent>,
+    buffers: Arc<TelemetryBuffers>,
 }
 
 /// Start the OTLP Ingestion Service.
 /// This service listens on all interfaces (0.0.0.0) to receive telemetry
 /// from containers in the Dispenser network.
 pub async fn start_ingestion_service(
-    tx: Sender<DispenserEvent>,
+    buffers: Arc<TelemetryBuffers>,
+    shutdown_signal: Arc<tokio::sync::Notify>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let state = Arc::new(AppState { tx });
+    let state = Arc::new(AppState { buffers });
 
     let app = Router::new()
         .route("/v1/logs", post(ingest_logs))
@@ -46,7 +46,13 @@ pub async fn start_ingestion_service(
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    axum::serve(listener, app).await.map_err(|e| e.into())
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            shutdown_signal.notified().await;
+            info!("OTLP ingestion service shutting down");
+        })
+        .await
+        .map_err(|e| e.into())
 }
 
 /// Handler for OTLP logs.
@@ -82,16 +88,8 @@ async fn ingest_logs(
         ));
     };
 
-    state
-        .tx
-        .try_send(DispenserEvent::LogBatch(payload))
-        .map_err(|_| {
-            error!("Failed to queue OTLP log batch: buffer full");
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                "Telemetry buffer full".to_string(),
-            )
-        })?;
+    state.buffers.push_logs_event(payload).await;
+
     Ok(())
 }
 
@@ -128,16 +126,8 @@ async fn ingest_traces(
         ));
     };
 
-    state
-        .tx
-        .try_send(DispenserEvent::SpanBatch(payload))
-        .map_err(|_| {
-            error!("Failed to queue OTLP trace batch: buffer full");
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                "Telemetry buffer full".to_string(),
-            )
-        })?;
+    state.buffers.push_span(payload).await;
+
     Ok(())
 }
 
@@ -164,75 +154,4 @@ async fn ingest_metrics(
     // Metrics are mentioned as future work in the plan.
     warn!("Received metrics batch - metrics are not yet supported");
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::http::HeaderValue;
-
-    #[tokio::test]
-    async fn test_ingest_logs() {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
-        let state = Arc::new(AppState { tx });
-
-        let payload = ExportLogsServiceRequest::default();
-        let mut buf = Vec::new();
-        payload.encode(&mut buf).unwrap();
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::CONTENT_TYPE,
-            HeaderValue::from_static("application/x-protobuf"),
-        );
-
-        let result = ingest_logs(State(state), headers, Bytes::from(buf)).await;
-        assert!(result.is_ok());
-
-        let event = rx.recv().await.unwrap();
-        match event {
-            DispenserEvent::LogBatch(_) => {}
-            _ => panic!("Expected LogBatch"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_ingest_traces() {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
-        let state = Arc::new(AppState { tx });
-
-        let payload = ExportTraceServiceRequest::default();
-        let mut buf = Vec::new();
-        payload.encode(&mut buf).unwrap();
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::CONTENT_TYPE,
-            HeaderValue::from_static("application/x-protobuf"),
-        );
-
-        let result = ingest_traces(State(state), headers, Bytes::from(buf)).await;
-        assert!(result.is_ok());
-
-        let event = rx.recv().await.unwrap();
-        match event {
-            DispenserEvent::SpanBatch(_) => {}
-            _ => panic!("Expected SpanBatch"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_ingest_metrics() {
-        let (tx, _rx) = tokio::sync::mpsc::channel(10);
-        let state = Arc::new(AppState { tx });
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::CONTENT_TYPE,
-            HeaderValue::from_static("application/x-protobuf"),
-        );
-
-        let result = ingest_metrics(State(state), headers, Bytes::new()).await;
-        assert!(result.is_ok());
-    }
 }

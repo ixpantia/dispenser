@@ -25,9 +25,7 @@ pub fn any_value_to_json(any_val: any_value::Value) -> JsonValue {
             let map = kv
                 .values
                 .into_iter()
-                .filter_map(|kv | {
-                    Some((kv.key, any_value_to_json(kv.value?.value?)))
-                })
+                .filter_map(|kv| Some((kv.key, any_value_to_json(kv.value?.value?))))
                 .collect();
 
             JsonValue::Object(map)

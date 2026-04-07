@@ -215,29 +215,21 @@ impl ServiceInstance {
                             _ => continue,
                         };
 
-                        let text = String::from_utf8_lossy(&message).to_string();
-                        for line in text.lines() {
-                            if line.is_empty() {
-                                continue;
-                            }
-
-                            // Cap log messages to 4KB to prevent memory exhaustion
-                            let truncated_line = if line.len() > 4096 {
-                                let mut end = 4096;
-                                while !line.is_char_boundary(end) {
-                                    end -= 1;
+                        if let Ok(text) = str::from_utf8(&message) {
+                            for line in text.lines() {
+                                if line.is_empty() {
+                                    continue;
                                 }
-                                format!("{}...[TRUNCATED]", &line[..end])
-                            } else {
-                                line.to_string()
-                            };
 
-                            telemetry.track_container_output(
-                                service_name.clone(),
-                                container_name.clone(),
-                                stream.to_string(),
-                                truncated_line,
-                            );
+                                telemetry
+                                    .track_container_output(
+                                        &service_name,
+                                        &container_name,
+                                        stream,
+                                        line,
+                                    )
+                                    .await;
+                            }
                         }
                     }
                     Err(e) => {
@@ -559,15 +551,17 @@ impl ServiceInstance {
                     .map(|dt| dt.timestamp_micros())
                     .unwrap_or_else(|| chrono::Utc::now().timestamp_micros());
 
-                telemetry.track_deployment(
-                    self,
-                    container_id,
-                    image_sha,
-                    image_size / 1_000_000,
-                    trigger_type,
-                    env!("CARGO_PKG_VERSION").to_string(),
-                    created_at,
-                );
+                telemetry
+                    .track_deployment(
+                        self,
+                        &container_id,
+                        &image_sha,
+                        image_size / 1_000_000,
+                        trigger_type,
+                        env!("CARGO_PKG_VERSION"),
+                        created_at,
+                    )
+                    .await;
             }
         }
 
@@ -712,32 +706,36 @@ impl ServiceInstance {
                         .and_then(|logs| logs.last())
                         .and_then(|l| l.output.clone());
 
-                    telemetry.track_status(
-                        self.config.service.name.clone(),
-                        info.id.unwrap_or_default(),
-                        container_state,
-                        health_status,
-                        exit_code,
-                        restart_count,
-                        uptime_seconds,
-                        failing_streak,
-                        last_health_output,
-                    );
+                    telemetry
+                        .track_status(
+                            &self.config.service.name,
+                            info.id.as_deref().unwrap_or_default(),
+                            container_state,
+                            health_status,
+                            exit_code,
+                            restart_count,
+                            uptime_seconds,
+                            failing_streak,
+                            last_health_output.as_deref(),
+                        )
+                        .await;
                 }
                 Err(bollard::errors::Error::DockerResponseServerError {
                     status_code: 404, ..
                 }) => {
-                    telemetry.track_status(
-                        self.config.service.name.clone(),
-                        String::new(),
-                        ContainerState::NotFound,
-                        TelemetryHealthStatus::None,
-                        None,
-                        0,
-                        0,
-                        0,
-                        None,
-                    );
+                    telemetry
+                        .track_status(
+                            &self.config.service.name,
+                            "",
+                            ContainerState::NotFound,
+                            TelemetryHealthStatus::None,
+                            None,
+                            0,
+                            0,
+                            0,
+                            None,
+                        )
+                        .await;
                 }
                 Err(e) => {
                     log::warn!(

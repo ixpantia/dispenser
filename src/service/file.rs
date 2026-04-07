@@ -316,7 +316,7 @@ pub struct Network {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Copy)]
 pub enum Restart {
     #[serde(alias = "always")]
     Always,

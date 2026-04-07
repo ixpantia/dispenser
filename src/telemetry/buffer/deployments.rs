@@ -69,8 +69,7 @@ impl DeploymentsBuffer {
         self.container_created_at
             .append_value(event.container_created_at);
         self.trigger_type.append_value(event.trigger_type.as_ref());
-        self.dispenser_version
-            .append_value(event.dispenser_version);
+        self.dispenser_version.append_value(event.dispenser_version);
 
         let restart_policy_str = match event.restart_policy {
             crate::service::file::Restart::Always => "always",
