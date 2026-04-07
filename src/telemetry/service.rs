@@ -11,7 +11,8 @@ use deltalake::datafusion::catalog::Session;
 use deltalake::datafusion::execution::disk_manager::DiskManagerMode;
 use deltalake::datafusion::execution::memory_pool::FairSpillPool;
 use deltalake::datafusion::execution::runtime_env::RuntimeEnvBuilder;
-use deltalake::datafusion::execution::{DiskManager, SessionStateBuilder};
+use deltalake::datafusion::execution::DiskManager;
+use deltalake::delta_datafusion::DeltaSessionContext;
 use deltalake::{DeltaTable, DeltaTableError};
 use log::{error, info, warn};
 use std::sync::Arc;
@@ -48,15 +49,12 @@ impl TelemetryService {
         let runtime_env = RuntimeEnvBuilder::new()
             .with_memory_pool(memory_pool)
             .with_disk_manager_builder(disk_manager)
-            .build()
+            .build_arc()
             .expect("Unable to buld memory pool");
 
-        let datafusion_session_state = Arc::new(
-            SessionStateBuilder::new()
-                .with_runtime_env(runtime_env.into())
-                .with_default_features()
-                .build(),
-        ) as Arc<dyn Session>;
+        let datafusion_session_state =
+            Arc::new(DeltaSessionContext::with_runtime_env(runtime_env.into()).state())
+                as Arc<dyn Session>;
 
         Self {
             config,
