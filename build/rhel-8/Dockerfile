@@ -3,7 +3,9 @@ FROM rockylinux:8
 RUN dnf install -y --allowerasing \
     curl \
     gcc \
+    gcc-c++ \
     make \
+    cmake \
     openssl-devel \
     pkg-config \
     rpm-build \
