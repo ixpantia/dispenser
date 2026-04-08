@@ -17,6 +17,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Restore target directory cache
+        uses: actions/cache/restore@v4
+        with:
+          path: target
+          key: ${{ matrix.os }}-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-target-
+
       - name: Setup Just
         uses: extractions/setup-just@v3
         with:
@@ -27,8 +35,16 @@ jobs:
 
       - name: Upload package
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: dispenser-${{ matrix.os }}
           path: |
             *.deb
             rpmout/RPMS/x86_64/*.rpm
+
+      - name: Save target directory cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: target
+          key: ${{ matrix.os }}-target-${{ hashFiles('**/Cargo.lock') }}

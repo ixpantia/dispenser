@@ -6,6 +6,7 @@ RUN dnf install -y --allowerasing \
     gcc-c++ \
     make \
     cmake \
+    perl \
     openssl-devel \
     pkg-config \
     rpm-build \
