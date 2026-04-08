@@ -19,9 +19,6 @@ mod service;
 mod signals;
 mod telemetry;
 
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 #[tokio::main]
 async fn main() -> ExitCode {
     dotenv::dotenv().ok();
