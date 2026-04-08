@@ -22,7 +22,7 @@ mod service;
 mod signals;
 mod telemetry;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() -> ExitCode {
     dotenv::dotenv().ok();
 
