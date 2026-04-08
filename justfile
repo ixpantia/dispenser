@@ -27,7 +27,11 @@ build-deb OS_NAME="":
   mkdir -p target/deb_stage/usr/local/bin
   cp {{TARGET_BIN}} target/deb_stage/usr/local/bin/dispenser
   sed 's/VERSION_PLACEHOLDER/{{DISPENSER_VERSION}}/' deb/DEBIAN/control > target/deb_stage/DEBIAN/control
-  dpkg-deb --build target/deb_stage dispenser-{{DISPENSER_VERSION}}-0{{if OS_NAME != "" { "-" + OS_NAME } else { "" }}}.x86_64.deb
+  if [ -n "{{OS_NAME}}" ]; then \
+    dpkg-deb --build target/deb_stage "dispenser-{{DISPENSER_VERSION}}-0-{{OS_NAME}}.x86_64.deb"; \
+  else \
+    dpkg-deb --build target/deb_stage "dispenser-{{DISPENSER_VERSION}}-0.x86_64.deb"; \
+  fi
 
 build-rpm OS_NAME="":
   rm -rf rpmstage rpmout
@@ -39,7 +43,7 @@ build-rpm OS_NAME="":
   cp rpm/usr/lib/systemd/system/dispenser.service rpmstage/usr/lib/systemd/system/
   rpmbuild --target=x86_64 --buildroot $(pwd)/rpmstage --define "_topdir $(pwd)/rpmout" --define "version {{DISPENSER_VERSION}}" -bb rpm/dispenser.spec --noclean
   if [ -n "{{OS_NAME}}" ]; then \
-    mv rpmout/RPMS/x86_64/dispenser-{{DISPENSER_VERSION}}-0.x86_64.rpm rpmout/RPMS/x86_64/dispenser-{{DISPENSER_VERSION}}-0.{{OS_NAME}}.x86_64.rpm; \
+    mv rpmout/RPMS/x86_64/dispenser-{{DISPENSER_VERSION}}-0.x86_64.rpm "rpmout/RPMS/x86_64/dispenser-{{DISPENSER_VERSION}}-0.{{OS_NAME}}.x86_64.rpm"; \
   fi
 
 # Matrix build recipes
