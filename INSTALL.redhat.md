@@ -23,7 +23,7 @@ wget ...
 
 
 ```sh
-sudo dnf install ./dispenser-0.20.0-0.x86_64.rpm
+sudo dnf install ./dispenser-0.21.0-0.x86_64.rpm
 ```
 
 You can validate that it was successfully installed by switching to the
