@@ -252,18 +252,16 @@ impl ServiceInstance {
     }
 
     pub async fn pull_image(&self) -> Result<(), ServiceConfigError> {
-        log::info!("Pulling image: {}", self.config.service.image);
+        log::info!("Pulling image: {}", self.config.service.image.full_path);
         let docker = get_docker();
 
         // Parse image name and tag
-        let (image, tag) =
-            crate::service::docker::parse_image_reference(&self.config.service.image);
-        let registry = crate::service::docker::extract_registry(image);
-        let credentials = crate::service::docker::get_credentials(registry).await;
+        let credentials =
+            crate::service::docker::get_credentials(&self.config.service.image.registry).await;
 
         let options: CreateImageOptions = CreateImageOptionsBuilder::new()
-            .from_image(image)
-            .tag(tag)
+            .from_image(&self.config.service.image.full_path)
+            .tag(&self.config.service.image.tag)
             .build();
 
         let mut stream = docker.create_image(Some(options), None, credentials);
@@ -276,13 +274,20 @@ impl ServiceInstance {
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to pull image {}: {}", self.config.service.image, e);
+                    log::error!(
+                        "Failed to pull image {}: {}",
+                        self.config.service.image.full_path,
+                        e
+                    );
                     return Err(ServiceConfigError::DockerApi(e));
                 }
             }
         }
 
-        log::info!("Image {} pulled successfully", self.config.service.image);
+        log::info!(
+            "Image {} pulled successfully",
+            self.config.service.image.full_path
+        );
         Ok(())
     }
 
@@ -505,7 +510,7 @@ impl ServiceInstance {
 
         // Build container config
         let config = ContainerCreateBody {
-            image: Some(self.config.service.image.clone()),
+            image: Some(self.config.service.image.full_path.clone()),
             hostname: self.config.service.hostname.clone(),
             user: self.config.service.user.clone(),
             working_dir: self.config.service.working_dir.clone(),

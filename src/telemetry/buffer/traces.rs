@@ -247,7 +247,7 @@ mod tests {
         data.resource_spans.push(resource_spans);
 
         buffer.push_traces_data(&data);
-        assert_eq!(buffer.len(), 1);
+        assert_eq!(buffer.count, 1);
 
         let batch = buffer.into_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);

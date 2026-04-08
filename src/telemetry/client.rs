@@ -41,7 +41,7 @@ impl TelemetryClient {
             event_id: Uuid::now_v7(),
             timestamp,
             service: svc_entry.name.clone(),
-            image: svc_entry.image.clone(),
+            image: svc_entry.image.full_path.clone(),
             image_sha,
             image_size_mb,
             container_id,

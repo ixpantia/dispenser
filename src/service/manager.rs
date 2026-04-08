@@ -597,7 +597,7 @@ mod tests {
         ServiceFile {
             service: ServiceEntry {
                 name: name.to_string(),
-                image: "test:latest".to_string(),
+                image: "test:latest".into(),
                 hostname: None,
                 user: None,
                 working_dir: None,
@@ -771,7 +771,7 @@ mod tests {
                 dir: PathBuf::from(format!("/service-{}", i)),
                 service: ServiceEntry {
                     name: format!("service-{}", i),
-                    image: "test:latest".to_string(),
+                    image: "test:latest".into(),
                     hostname: None,
                     user: None,
                     working_dir: None,

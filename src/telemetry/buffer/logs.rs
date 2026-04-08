@@ -197,12 +197,12 @@ mod tests {
         data.resource_logs.push(resource_log);
 
         assert!(buffer.is_empty());
-        assert_eq!(buffer.len(), 0);
+        assert_eq!(buffer.count, 0);
 
         buffer.push_logs_data(&data);
 
         assert!(!buffer.is_empty());
-        assert_eq!(buffer.len(), 1);
+        assert_eq!(buffer.count, 1);
 
         let batch = buffer.into_record_batch().unwrap();
         assert_eq!(batch.num_rows(), 1);
