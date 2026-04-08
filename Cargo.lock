@@ -2683,6 +2683,7 @@ dependencies = [
  "serde_json",
  "signal-hook",
  "thiserror 2.0.18",
+ "tikv-jemalloc-ctl",
  "tikv-jemallocator",
  "tokio",
  "toml",
@@ -6043,6 +6044,17 @@ checksum = "83d957f535b242b91aa9f47bde08080f9a6fef276477e55b0079979d002759d5"
 dependencies = [
  "byteorder",
  "trackable",
+]
+
+[[package]]
+name = "tikv-jemalloc-ctl"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "661f1f6a57b3a36dc9174a2c10f19513b4866816e13425d3e418b11cc37bc24c"
+dependencies = [
+ "libc",
+ "paste",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]

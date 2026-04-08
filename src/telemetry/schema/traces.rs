@@ -113,8 +113,6 @@ pub async fn create_traces_table(table_uri: &Url) -> Result<DeltaTable, DeltaTab
             TableProperty::LogRetentionDuration,
             Some("interval 1 hours"),
         )
-        .with_configuration_property(TableProperty::AutoOptimizeAutoCompact, Some("true"))
-        .with_configuration_property(TableProperty::AutoOptimizeOptimizeWrite, Some("true"))
         .with_configuration_property(TableProperty::CheckpointInterval, Some("20"))
         .with_configuration_property(TableProperty::TargetFileSize, Some("128mb"))
         .await

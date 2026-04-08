@@ -38,3 +38,7 @@ bump NEW_VERSION:
   sed -i '' -E 's/v[0-9]+\.[0-9]+\.[0-9]+/v{{NEW_VERSION}}/g' README.md INSTALL*.md
   sed -i '' -E 's/dispenser-[0-9]+\.[0-9]+\.[0-9]+/dispenser-{{NEW_VERSION}}/g' README.md INSTALL*.md
   @echo "Done. Don't forget to commit and tag!"
+
+mem_prof:
+  docker rm -f nginx-service-1 nginx-service-2 hello-world-job
+  cd example && MALLOC_CONF=prof:true,lg_prof_sample:0 _RJEM_MALLOC_CONF=prof:true,lg_prof_sample:0 cargo run --release --manifest-path ../Cargo.toml

@@ -7,8 +7,15 @@ use super::schema::{
     create_status_table, create_traces_table,
 };
 use crate::service::file::TelemetryConfig;
+use deltalake::datafusion::catalog::Session;
+use deltalake::datafusion::execution::DiskManager;
+use deltalake::datafusion::execution::disk_manager::DiskManagerMode;
+use deltalake::datafusion::execution::memory_pool::FairSpillPool;
+use deltalake::datafusion::execution::runtime_env::RuntimeEnvBuilder;
+use deltalake::delta_datafusion::DeltaSessionContext;
 use deltalake::{DeltaTable, DeltaTableError};
 use log::{error, info, warn};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
 use url::Url;
@@ -25,12 +32,27 @@ pub struct TelemetryService {
     spans_buffer: SpansBuffer,
     container_output_buffer: ContainerOutputBuffer,
     buffer_limit: usize,
+    datafusion_session_state: Arc<dyn deltalake::datafusion::catalog::Session>,
 }
 
 impl TelemetryService {
     pub fn new(config: TelemetryConfig, rx: Receiver<DispenserEvent>) -> Self {
         let buffer_limit = config.buffer_size.unwrap_or(DEFAULT_BUFFER_SIZE);
+
+        let disk_manager = DiskManager::builder().with_mode(DiskManagerMode::OsTmpDirectory);
+
+        let runtime_env = RuntimeEnvBuilder::new()
+            .with_disk_manager_builder(disk_manager)
+            .with_memory_limit(10 * 1024 * 1024, 1.0)
+            .build_arc()
+            .expect("Unable to buld memory pool");
+
+        let datafusion_session_state =
+            Arc::new(DeltaSessionContext::with_runtime_env(runtime_env.into()).state())
+                as Arc<dyn Session>;
+
         Self {
+            datafusion_session_state,
             config,
             rx,
             deployments_buffer: DeploymentsBuffer::new(64),
@@ -271,6 +293,14 @@ impl TelemetryService {
         let _ops = table
             .write(vec![batch])
             .with_save_mode(deltalake::protocol::SaveMode::Append)
+            .with_session_fallback_policy(
+                deltalake::delta_datafusion::SessionFallbackPolicy::RequireSessionState,
+            )
+            .with_session_state(Arc::clone(&self.datafusion_session_state))
+            .with_configuration([
+                ("delta.autoOptimize.autoCompact", Some("false")),
+                ("delta.autoOptimize.optimizeWrite", Some("false")),
+            ])
             .await?;
         Ok(())
     }

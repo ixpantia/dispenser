@@ -1,11 +1,15 @@
 [package]
 name = "dispenser"
 version = "0.16.1"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 
+[profile.release]
+debug = true
+
 [dependencies]
-tikv-jemallocator = "0.6"
+tikv-jemalloc-ctl = { version = "0.6.1", features = ["profiling"] }
+tikv-jemallocator = { version = "0.6", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 

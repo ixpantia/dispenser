@@ -3,7 +3,7 @@ use tokio::sync::{Mutex, Notify};
 
 use crate::{
     cli::Commands,
-    proxy::{acme, run_dummy_proxy, run_proxy, ProxySignals},
+    proxy::{ProxySignals, acme, run_dummy_proxy, run_proxy},
     service::{
         file::TelemetryConfig,
         manager::{ServiceMangerConfig, ServicesManager},
@@ -24,6 +24,8 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    init_profiling();
+
     dotenv::dotenv().ok();
 
     rustls::crypto::ring::default_provider()
@@ -210,6 +212,62 @@ async fn main() -> ExitCode {
                     std::process::exit(0);
                 }
             }
+        }
+    }
+}
+
+fn init_profiling() {
+    log::info!("Memory profiling enabled.");
+
+    // Manually check if MALLOC_CONF is set
+    if let Ok(conf) = std::env::var("MALLOC_CONF") {
+        log::info!("MALLOC_CONF is set to: {}", conf);
+    } else {
+        log::warn!("MALLOC_CONF environment variable is NOT set.");
+    }
+
+    // Check if profiling is active
+    match tikv_jemalloc_ctl::profiling::prof::read() {
+        Ok(true) => {
+            log::info!("Jemalloc profiling is active.");
+            tokio::spawn(async move {
+                // Use a 5-second interval for initial verification
+                let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+                loop {
+                    interval.tick().await;
+                    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                    let filename = format!("dispenser-{}.heap", timestamp);
+                    let file_c_str = std::ffi::CString::new(filename.clone()).unwrap();
+                    log::info!("Dumping memory profile to {}", filename);
+                    unsafe {
+                        if let Err(e) =
+                            tikv_jemalloc_ctl::raw::write(b"prof.dump\0", file_c_str.as_ptr())
+                        {
+                            log::error!("Failed to dump memory profile: {}", e);
+                        }
+                    }
+                }
+            });
+        }
+        Ok(false) => {
+            log::warn!("Jemalloc profiling is NOT enabled in jemalloc configuration.");
+            log::warn!("Please run with MALLOC_CONF=prof:true to enable profiling.");
+
+            log::info!("Attempting manual dump to verify jemalloc capability...");
+            let file_c_str = std::ffi::CString::new("manual-test.heap").unwrap();
+            unsafe {
+                if let Err(e) = tikv_jemalloc_ctl::raw::write(b"prof.dump\0", file_c_str.as_ptr()) {
+                    log::error!(
+                        "Manual dump failed (as expected if prof:true is missing): {}",
+                        e
+                    );
+                } else {
+                    log::info!("Manual dump SUCCEEDED! This is unexpected but interesting.");
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to check if jemalloc profiling is enabled: {}", e);
         }
     }
 }
