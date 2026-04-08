@@ -1,5 +1,7 @@
-use opentelemetry_proto::tonic::common::v1::{any_value, KeyValue};
+use opentelemetry_proto::tonic::common::v1::{KeyValue, any_value};
 use serde_json::{Map, Value as JsonValue};
+
+use super::bytes_to_hex;
 
 pub fn any_value_to_json(any_val: &any_value::Value) -> JsonValue {
     match any_val {
@@ -33,7 +35,7 @@ pub fn any_value_to_json(any_val: &any_value::Value) -> JsonValue {
             JsonValue::Object(map)
         }
         any_value::Value::BytesValue(b) => {
-            let encoded: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+            let encoded: String = bytes_to_hex(b);
             JsonValue::String(encoded)
         }
     }

@@ -1,3 +1,5 @@
+use super::bytes_to_hex;
+
 use super::super::schema::traces_schema;
 use super::json::key_values_to_json;
 use arrow::array::{
@@ -88,33 +90,21 @@ impl SpansBuffer {
                     if span.trace_id.is_empty() {
                         self.trace_id.append_value("");
                     } else {
-                        let trace_id_hex = span
-                            .trace_id
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<String>();
+                        let trace_id_hex = bytes_to_hex(&span.trace_id);
                         self.trace_id.append_value(&trace_id_hex);
                     }
 
                     if span.span_id.is_empty() {
                         self.span_id.append_value("");
                     } else {
-                        let span_id_hex = span
-                            .span_id
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<String>();
+                        let span_id_hex = bytes_to_hex(&span.span_id);
                         self.span_id.append_value(&span_id_hex);
                     }
 
                     if span.parent_span_id.is_empty() {
                         self.parent_span_id.append_null();
                     } else {
-                        let parent_span_id_hex = span
-                            .parent_span_id
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<String>();
+                        let parent_span_id_hex = bytes_to_hex(&span.parent_span_id);
                         self.parent_span_id.append_value(&parent_span_id_hex);
                     }
 
@@ -235,7 +225,7 @@ impl SpansBuffer {
 mod tests {
     use super::*;
     use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
-    use opentelemetry_proto::tonic::trace::v1::{span::Event, ResourceSpans, ScopeSpans, Span};
+    use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, span::Event};
 
     #[test]
     fn test_push_traces_data() {

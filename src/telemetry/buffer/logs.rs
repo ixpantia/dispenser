@@ -1,3 +1,5 @@
+use super::bytes_to_hex;
+
 use super::super::schema::logs_schema;
 use super::json::key_values_to_json;
 use arrow::array::{Date32Builder, StringBuilder, TimestampMicrosecondBuilder};
@@ -86,8 +88,7 @@ impl LogsBuffer {
                                 self.body.append_value(json_val.to_string())
                             }
                             Some(any_value::Value::BytesValue(b)) => {
-                                let encoded: String =
-                                    b.iter().map(|byte| format!("{:02x}", byte)).collect();
+                                let encoded: String = bytes_to_hex(b);
                                 self.body.append_value(encoded)
                             }
                             None => self.body.append_null(),
@@ -99,22 +100,14 @@ impl LogsBuffer {
                     if record.trace_id.is_empty() {
                         self.trace_id.append_null();
                     } else {
-                        let trace_id_hex = record
-                            .trace_id
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<String>();
+                        let trace_id_hex = bytes_to_hex(&record.trace_id);
                         self.trace_id.append_value(&trace_id_hex);
                     }
 
                     if record.span_id.is_empty() {
                         self.span_id.append_null();
                     } else {
-                        let span_id_hex = record
-                            .span_id
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<String>();
+                        let span_id_hex = bytes_to_hex(&record.span_id);
                         self.span_id.append_value(&span_id_hex);
                     }
 

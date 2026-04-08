@@ -2,8 +2,8 @@ use super::events::{ContainerOutputEvent, ContainerStatusEvent, DeploymentEvent,
 use super::types::{ContainerState, HealthStatus, TriggerType};
 use crate::service::instance::ServiceInstance;
 use log::error;
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
 

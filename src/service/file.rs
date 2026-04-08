@@ -6,7 +6,7 @@ use std::{
 };
 use url::Url;
 
-use super::vars::{render_template, ServiceConfigError, ServiceVarsMaterialized};
+use super::vars::{ServiceConfigError, ServiceVarsMaterialized, render_template};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

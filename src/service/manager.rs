@@ -13,8 +13,8 @@ use crate::service::{
     file::{CertbotSettings, EntrypointFile, GlobalProxyConfig, ProxySettings, ServiceFile},
     instance::{ServiceInstance, ServiceInstanceConfig},
     manifest::ImageWatcher,
-    network::{ensure_default_network, remove_default_network, NetworkInstance},
-    vars::{render_template, ServiceConfigError, ServiceVarsMaterialized},
+    network::{NetworkInstance, ensure_default_network, remove_default_network},
+    vars::{ServiceConfigError, ServiceVarsMaterialized, render_template},
 };
 
 pub struct ServiceMangerConfig {

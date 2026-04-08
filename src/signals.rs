@@ -106,7 +106,9 @@ pub async fn reload_manager(
         let old = holder.clone();
         *holder = Arc::clone(&new_manager);
         if old.proxy_enabled() != new_manager.proxy_enabled() {
-            log::warn!("proxy.enabled changed between reloads. This is not supported. Please restart dispenser to enable/disable the proxy.");
+            log::warn!(
+                "proxy.enabled changed between reloads. This is not supported. Please restart dispenser to enable/disable the proxy."
+            );
         }
         old
     };

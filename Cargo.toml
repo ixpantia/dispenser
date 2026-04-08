@@ -58,3 +58,7 @@ dotenv = "0.15.0"
 chrono = "0.4.44"
 arrow = "57.3.0"
 url = "2.5.8"
+
+[dev-dependencies]
+quickcheck = "1.1.0"
+quickcheck_macros = "1.2.0"

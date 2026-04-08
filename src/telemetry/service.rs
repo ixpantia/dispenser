@@ -96,29 +96,14 @@ impl TelemetryService {
         loop {
             tokio::select! {
                 maybe_event = self.rx.recv() => {
-                    match maybe_event {
-                        Some(event) => {
-                            self.handle_event(event);
-                            if self.should_flush() {
-                                self.flush().await;
-                            }
-                        }
-                        None => {
-                            info!("Telemetry channel closed, flushing remaining events");
-                            self.flush().await;
-                            break;
-                        }
+                    if maybe_event.is_none() {
+                        info!("Telemetry channel closed, flushing remaining events");
+                        self.flush().await;
+                        break;
                     }
                 }
                 _ = flush_interval.tick() => {
-                    if !self.deployments_buffer.is_empty()
-                        || !self.status_buffer.is_empty()
-                        || !self.logs_buffer.is_empty()
-                        || !self.spans_buffer.is_empty()
-                        || !self.container_output_buffer.is_empty()
-                    {
-                        self.flush().await;
-                    }
+                    self.flush().await;
                 }
             }
         }

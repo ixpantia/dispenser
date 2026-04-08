@@ -4,9 +4,9 @@
 //! for interacting with Docker via the bollard API, including asynchronous
 //! credential support from the Docker CLI configuration.
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use bollard::auth::DockerCredentials;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bollard::Docker;
+use bollard::auth::DockerCredentials;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
