@@ -4,9 +4,6 @@ version = "0.18.0"
 edition = "2024"
 license = "MIT"
 
-[profile.release]
-debug = true
-
 [dependencies]
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 base64 = "0.22.1"
