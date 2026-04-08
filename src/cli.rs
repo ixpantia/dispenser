@@ -34,6 +34,16 @@ pub enum Commands {
         #[arg(short, long = "service")]
         services: Option<Vec<String>>,
     },
+    /// Internal command to flush telemetry data (worker process).
+    #[command(hide = true)]
+    TelemetryFlush {
+        /// Path to the directory containing the batch of JSONL files.
+        #[arg(long)]
+        batch_path: PathBuf,
+        /// Telemetry configuration as a JSON string.
+        #[arg(long)]
+        config: String,
+    },
 }
 
 #[derive(Clone, Debug, ValueEnum)]

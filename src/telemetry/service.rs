@@ -1,61 +1,90 @@
-use super::buffer::{
-    ContainerOutputBuffer, DeploymentsBuffer, LogsBuffer, SpansBuffer, StatusBuffer,
-};
 use super::events::DispenserEvent;
 use super::schema::{
     create_container_output_table, create_deployments_table, create_logs_table,
     create_status_table, create_traces_table,
 };
 use crate::service::file::TelemetryConfig;
-use deltalake::datafusion::catalog::Session;
-use deltalake::datafusion::execution::DiskManager;
-use deltalake::datafusion::execution::disk_manager::DiskManagerMode;
-use deltalake::datafusion::execution::runtime_env::RuntimeEnvBuilder;
-use deltalake::delta_datafusion::DeltaSessionContext;
-use deltalake::{DeltaTable, DeltaTableError};
 use log::{error, info, warn};
-use std::sync::Arc;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use tokio::fs::{self, File, OpenOptions};
+use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::Receiver;
-use url::Url;
+use uuid::Uuid;
 
 const FLUSH_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
 
 pub struct TelemetryService {
     config: TelemetryConfig,
     rx: Receiver<DispenserEvent>,
-    deployments_buffer: DeploymentsBuffer,
-    status_buffer: StatusBuffer,
-    logs_buffer: LogsBuffer,
-    spans_buffer: SpansBuffer,
-    container_output_buffer: ContainerOutputBuffer,
-    datafusion_session_state: Arc<dyn deltalake::datafusion::catalog::Session>,
+    writers: TelemetryWriters,
+    telemetry_dir: PathBuf,
+}
+
+struct TelemetryWriters {
+    deployments: Mutex<Option<BufWriter<File>>>,
+    status: Mutex<Option<BufWriter<File>>>,
+    logs: Mutex<Option<BufWriter<File>>>,
+    traces: Mutex<Option<BufWriter<File>>>,
+    container_output: Mutex<Option<BufWriter<File>>>,
+}
+
+impl TelemetryWriters {
+    fn new() -> Self {
+        Self {
+            deployments: Mutex::new(None),
+            status: Mutex::new(None),
+            logs: Mutex::new(None),
+            traces: Mutex::new(None),
+            container_output: Mutex::new(None),
+        }
+    }
+
+    fn all(&self) -> [&Mutex<Option<BufWriter<File>>>; 5] {
+        [
+            &self.deployments,
+            &self.status,
+            &self.logs,
+            &self.traces,
+            &self.container_output,
+        ]
+    }
 }
 
 impl TelemetryService {
-    pub fn new(config: TelemetryConfig, rx: Receiver<DispenserEvent>) -> Self {
-        let disk_manager = DiskManager::builder().with_mode(DiskManagerMode::OsTmpDirectory);
-
-        let runtime_env = RuntimeEnvBuilder::new()
-            .with_disk_manager_builder(disk_manager)
-            .with_memory_limit(10 * 1024 * 1024, 1.0)
-            .build_arc()
-            .expect("Unable to buld memory pool");
-
-        let datafusion_session_state =
-            Arc::new(DeltaSessionContext::with_runtime_env(runtime_env.into()).state())
-                as Arc<dyn Session>;
+    pub async fn new(config: TelemetryConfig, rx: Receiver<DispenserEvent>) -> Self {
+        let telemetry_dir = PathBuf::from("./.dispenser/telemetry");
+        let active_dir = telemetry_dir.join("active");
+        fs::create_dir_all(&active_dir)
+            .await
+            .expect("Failed to create telemetry active directory");
 
         Self {
-            datafusion_session_state,
             config,
             rx,
-            deployments_buffer: DeploymentsBuffer::new(64),
-            status_buffer: StatusBuffer::new(64),
-            logs_buffer: LogsBuffer::new(64), // Small initial capacity to prevent fragmentation
-            spans_buffer: SpansBuffer::new(64),
-            container_output_buffer: ContainerOutputBuffer::new(64),
+            writers: TelemetryWriters::new(),
+            telemetry_dir,
         }
+    }
+
+    async fn get_or_open_writer<'a>(
+        &self,
+        writer_mutex: &'a Mutex<Option<BufWriter<File>>>,
+        filename: &str,
+    ) -> tokio::sync::MutexGuard<'a, Option<BufWriter<File>>> {
+        let mut writer_opt = writer_mutex.lock().await;
+        if writer_opt.is_none() {
+            let path = self.telemetry_dir.join("active").join(filename);
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .await
+                .expect("Failed to open telemetry file");
+            *writer_opt = Some(BufWriter::new(file));
+        }
+        writer_opt
     }
 
     pub async fn run(mut self) {
@@ -80,11 +109,7 @@ impl TelemetryService {
             error!("Failed to initialize container output table: {}", e);
         }
 
-        // Start with a tick so we don't wait 5 mins for the first check if needed,
-        // but actually we only want to flush if time passes.
-        // interval.tick() completes immediately the first time.
         let mut flush_interval = tokio::time::interval(FLUSH_INTERVAL);
-        // Consume the first immediate tick
         flush_interval.tick().await;
 
         loop {
@@ -92,7 +117,7 @@ impl TelemetryService {
                 maybe_event = self.rx.recv() => {
                     match maybe_event {
                         Some(event) => {
-                            self.handle_event(event);
+                            self.handle_event(event).await;
                         }
                         None => {
                             info!("Telemetry channel closed, flushing remaining events");
@@ -109,183 +134,136 @@ impl TelemetryService {
         info!("Telemetry service stopped");
     }
 
-    fn handle_event(&mut self, event: DispenserEvent) {
-        match event {
-            DispenserEvent::Deployment(e) => self.deployments_buffer.push(&e),
-            DispenserEvent::ContainerStatus(e) => self.status_buffer.push(&e),
-            DispenserEvent::LogBatch(data) => self.logs_buffer.push_logs_data(&data),
-            DispenserEvent::SpanBatch(data) => self.spans_buffer.push_traces_data(&data),
-            DispenserEvent::ContainerOutput(e) => self.container_output_buffer.push(&e),
+    async fn handle_event(&self, event: DispenserEvent) {
+        let (writer_mutex, filename) = match &event {
+            DispenserEvent::Deployment(_) => (&self.writers.deployments, "deployments.jsonl"),
+            DispenserEvent::ContainerStatus(_) => (&self.writers.status, "status.jsonl"),
+            DispenserEvent::LogBatch(_) => (&self.writers.logs, "logs.jsonl"),
+            DispenserEvent::SpanBatch(_) => (&self.writers.traces, "traces.jsonl"),
+            DispenserEvent::ContainerOutput(_) => {
+                (&self.writers.container_output, "container-output.jsonl")
+            }
+        };
+
+        let mut writer_opt = self.get_or_open_writer(writer_mutex, filename).await;
+        if let Some(writer) = writer_opt.as_mut() {
+            if let Ok(json) = serde_json::to_string(&event) {
+                if let Err(e) = writer.write_all(json.as_bytes()).await {
+                    error!("Failed to write telemetry event to disk: {}", e);
+                } else if let Err(e) = writer.write_all(b"\n").await {
+                    error!("Failed to write newline to disk: {}", e);
+                }
+            }
         }
     }
 
     async fn flush(&mut self) {
         let start = Instant::now();
 
-        // Flush Deployments
-        if !self.deployments_buffer.is_empty() {
-            let count = self.deployments_buffer.len();
-            let old_buffer =
-                std::mem::replace(&mut self.deployments_buffer, DeploymentsBuffer::new(64));
-
-            match old_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(
-                            &self.config.table_uri_deployments(),
-                            batch,
-                            TableType::Deployments,
-                        )
-                        .await
-                    {
-                        error!("Failed to write deployment events to Delta Lake: {:?}", e);
-                    } else {
-                        info!("Flushed {} deployment events to Delta Lake", count);
-                    }
+        // 1. Acquire locks and close all writers by setting them to None
+        let mut any_data = false;
+        for writer_mutex in self.writers.all() {
+            let mut writer_opt = writer_mutex.lock().await;
+            if let Some(mut writer) = writer_opt.take() {
+                if let Err(e) = writer.flush().await {
+                    error!("Failed to flush telemetry writer: {}", e);
                 }
-                Err(e) => error!("Failed to create record batch for deployments: {:?}", e),
+                any_data = true;
+                // Dropping the writer here closes the file
             }
         }
 
-        // Flush Status
-        if !self.status_buffer.is_empty() {
-            let count = self.status_buffer.len();
-            let old_buffer = std::mem::replace(&mut self.status_buffer, StatusBuffer::new(64));
-
-            match old_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_status(), batch, TableType::Status)
-                        .await
-                    {
-                        error!("Failed to write status events to Delta Lake: {:?}", e);
-                    } else {
-                        info!("Flushed {} status events to Delta Lake", count);
-                    }
+        if !any_data {
+            // Check if there are any active files that weren't open but exist
+            let active_dir = self.telemetry_dir.join("active");
+            if let Ok(mut entries) = fs::read_dir(&active_dir).await {
+                if entries.next_entry().await.unwrap().is_none() {
+                    return;
                 }
-                Err(e) => error!("Failed to create record batch for status: {:?}", e),
+            } else {
+                return;
             }
         }
 
-        // Flush Logs
-        if !self.logs_buffer.is_empty() {
-            let count = self.logs_buffer.len();
-            let old_buffer = std::mem::replace(&mut self.logs_buffer, LogsBuffer::new(64));
+        // 2. Prepare rotation
+        let batch_uuid = Uuid::now_v7();
+        let batch_dir = self
+            .telemetry_dir
+            .join("pending")
+            .join(batch_uuid.to_string());
 
-            match old_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_logs(), batch, TableType::Logs)
-                        .await
-                    {
-                        error!("Failed to write log events to Delta Lake: {:?}", e);
-                    } else {
-                        info!("Flushed {} log events to Delta Lake", count);
-                    }
-                }
-                Err(e) => error!("Failed to create record batch for logs: {:?}", e),
-            }
+        if let Err(e) = fs::create_dir_all(&batch_dir).await {
+            error!("Failed to create batch directory {:?}: {}", batch_dir, e);
+            return;
         }
 
-        // Flush Spans
-        if !self.spans_buffer.is_empty() {
-            let count = self.spans_buffer.len();
-            let old_buffer = std::mem::replace(&mut self.spans_buffer, SpansBuffer::new(64));
-
-            match old_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(&self.config.table_uri_traces(), batch, TableType::Traces)
-                        .await
-                    {
-                        error!("Failed to write trace events to Delta Lake: {:?}", e);
-                    } else {
-                        info!("Flushed {} trace events to Delta Lake", count);
+        // 3. Move active files to pending batch
+        let active_dir = self.telemetry_dir.join("active");
+        match fs::read_dir(&active_dir).await {
+            Ok(mut entries) => {
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let path = entry.path();
+                    let dest = batch_dir.join(path.file_name().unwrap());
+                    if let Err(e) = fs::rename(&path, &dest).await {
+                        error!("Failed to move {:?} to {:?}: {}", path, dest, e);
                     }
                 }
-                Err(e) => error!("Failed to create record batch for traces: {:?}", e),
             }
+            Err(e) => error!("Failed to read active telemetry directory: {}", e),
         }
 
-        // Flush Container Output
-        if !self.container_output_buffer.is_empty() {
-            let count = self.container_output_buffer.len();
-            let old_buffer = std::mem::replace(
-                &mut self.container_output_buffer,
-                ContainerOutputBuffer::new(64),
-            );
-
-            match old_buffer.into_record_batch() {
-                Ok(batch) => {
-                    if let Err(e) = self
-                        .write_to_delta(
-                            &self.config.table_uri_container_output(),
-                            batch,
-                            TableType::ContainerOutput,
-                        )
-                        .await
-                    {
-                        error!(
-                            "Failed to write container output events to Delta Lake: {:?}",
-                            e
-                        );
-                    } else {
-                        info!("Flushed {} container output events to Delta Lake", count);
-                    }
-                }
-                Err(e) => error!(
-                    "Failed to create record batch for container output: {:?}",
-                    e
-                ),
+        // 4. Spawn worker process
+        let exe = match std::env::current_exe() {
+            Ok(e) => e,
+            Err(e) => {
+                error!("Failed to get current executable path: {}", e);
+                return;
             }
-        }
+        };
+
+        let config_json = match serde_json::to_string(&self.config) {
+            Ok(j) => j,
+            Err(e) => {
+                error!("Failed to serialize telemetry config: {}", e);
+                return;
+            }
+        };
+
+        let child = match tokio::process::Command::new(exe)
+            .arg("telemetry-flush")
+            .arg("--batch-path")
+            .arg(&batch_dir)
+            .arg("--config")
+            .arg(config_json)
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Failed to spawn telemetry worker: {}", e);
+                return;
+            }
+        };
+
+        info!(
+            "Spawned telemetry worker (PID: {:?}) for batch {}",
+            child.id(),
+            batch_uuid
+        );
 
         let duration = start.elapsed();
         if duration.as_secs() > 1 {
-            warn!("Telemetry flush took {:?}", duration);
+            warn!("Telemetry rotation took {:?}", duration);
         }
-    }
-
-    async fn write_to_delta(
-        &self,
-        table_uri: &Url,
-        batch: arrow::record_batch::RecordBatch,
-        table_type: TableType,
-    ) -> Result<(), DeltaTableError> {
-        let table = match DeltaTable::try_from_url(table_uri.clone()).await {
-            Ok(table) => table,
-            Err(DeltaTableError::NotATable(_)) | Err(DeltaTableError::InvalidTableLocation(_)) => {
-                match table_type {
-                    TableType::Deployments => create_deployments_table(table_uri).await?,
-                    TableType::Status => create_status_table(table_uri).await?,
-                    TableType::Logs => create_logs_table(table_uri).await?,
-                    TableType::Traces => create_traces_table(table_uri).await?,
-                    TableType::ContainerOutput => create_container_output_table(table_uri).await?,
-                }
-            }
-            Err(e) => return Err(e),
-        };
-
-        let _ops = table
-            .write(vec![batch])
-            .with_save_mode(deltalake::protocol::SaveMode::Append)
-            .with_session_fallback_policy(
-                deltalake::delta_datafusion::SessionFallbackPolicy::RequireSessionState,
-            )
-            .with_session_state(Arc::clone(&self.datafusion_session_state))
-            .with_configuration([
-                ("delta.autoOptimize.autoCompact", Some("false")),
-                ("delta.autoOptimize.optimizeWrite", Some("false")),
-            ])
-            .await?;
-        Ok(())
     }
 }
 
-enum TableType {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EventType {
     Deployments,
     Status,
     Logs,
     Traces,
     ContainerOutput,
 }
+
+pub type TableType = EventType;

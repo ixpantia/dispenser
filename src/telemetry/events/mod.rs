@@ -8,8 +8,9 @@ pub use status::ContainerStatusEvent;
 
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum DispenserEvent {
     Deployment(Box<DeploymentEvent>),
     ContainerStatus(Box<ContainerStatusEvent>),

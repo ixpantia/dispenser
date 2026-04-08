@@ -32,6 +32,21 @@ async fn main() -> ExitCode {
 
     let args = cli::get_cli_args();
 
+    // Handle internal telemetry worker command before any other initialization
+    if let Some(Commands::TelemetryFlush { batch_path, config }) = &args.command {
+        deltalake::aws::register_handlers(None);
+        deltalake::azure::register_handlers(None);
+        deltalake::gcp::register_handlers(None);
+        let telemetry_config: TelemetryConfig = match serde_json::from_str(config) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to parse telemetry configuration: {}", e);
+                return ExitCode::FAILURE;
+            }
+        };
+        return telemetry::worker::run_worker(batch_path.clone(), telemetry_config).await;
+    }
+
     if let Some(signal) = &args.signal {
         return signals::send_signal(signal.clone()).await;
     }
@@ -56,10 +71,6 @@ async fn main() -> ExitCode {
             }
         }
     }
-
-    deltalake::aws::register_handlers(None);
-    deltalake::azure::register_handlers(None);
-    deltalake::gcp::register_handlers(None);
 
     log::info!("Dispenser running with PID: {}", std::process::id());
 
@@ -233,7 +244,7 @@ fn init_telemetry(config: Option<&TelemetryConfig>) -> Option<TelemetryClient> {
 
     // Telemetry Service runs on the main tokio runtime
     tokio::spawn(async move {
-        let service = TelemetryService::new(config, rx);
+        let service = TelemetryService::new(config, rx).await;
         service.run().await;
     });
 
