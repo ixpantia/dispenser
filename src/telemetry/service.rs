@@ -10,7 +10,6 @@ use crate::service::file::TelemetryConfig;
 use deltalake::datafusion::catalog::Session;
 use deltalake::datafusion::execution::DiskManager;
 use deltalake::datafusion::execution::disk_manager::DiskManagerMode;
-use deltalake::datafusion::execution::memory_pool::FairSpillPool;
 use deltalake::datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use deltalake::delta_datafusion::DeltaSessionContext;
 use deltalake::{DeltaTable, DeltaTableError};
@@ -20,7 +19,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Receiver;
 use url::Url;
 
-const DEFAULT_BUFFER_SIZE: usize = 500;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(30); // 30 seconds
 
 pub struct TelemetryService {
@@ -31,14 +29,11 @@ pub struct TelemetryService {
     logs_buffer: LogsBuffer,
     spans_buffer: SpansBuffer,
     container_output_buffer: ContainerOutputBuffer,
-    buffer_limit: usize,
     datafusion_session_state: Arc<dyn deltalake::datafusion::catalog::Session>,
 }
 
 impl TelemetryService {
     pub fn new(config: TelemetryConfig, rx: Receiver<DispenserEvent>) -> Self {
-        let buffer_limit = config.buffer_size.unwrap_or(DEFAULT_BUFFER_SIZE);
-
         let disk_manager = DiskManager::builder().with_mode(DiskManagerMode::OsTmpDirectory);
 
         let runtime_env = RuntimeEnvBuilder::new()
@@ -60,7 +55,6 @@ impl TelemetryService {
             logs_buffer: LogsBuffer::new(64), // Small initial capacity to prevent fragmentation
             spans_buffer: SpansBuffer::new(64),
             container_output_buffer: ContainerOutputBuffer::new(64),
-            buffer_limit,
         }
     }
 
@@ -96,10 +90,15 @@ impl TelemetryService {
         loop {
             tokio::select! {
                 maybe_event = self.rx.recv() => {
-                    if maybe_event.is_none() {
-                        info!("Telemetry channel closed, flushing remaining events");
-                        self.flush().await;
-                        break;
+                    match maybe_event {
+                        Some(event) => {
+                            self.handle_event(event);
+                        }
+                        None => {
+                            info!("Telemetry channel closed, flushing remaining events");
+                            self.flush().await;
+                            break;
+                        }
                     }
                 }
                 _ = flush_interval.tick() => {
@@ -118,14 +117,6 @@ impl TelemetryService {
             DispenserEvent::SpanBatch(data) => self.spans_buffer.push_traces_data(&data),
             DispenserEvent::ContainerOutput(e) => self.container_output_buffer.push(&e),
         }
-    }
-
-    fn should_flush(&self) -> bool {
-        self.deployments_buffer.len() >= self.buffer_limit
-            || self.status_buffer.len() >= self.buffer_limit
-            || self.logs_buffer.len() >= self.buffer_limit
-            || self.spans_buffer.len() >= self.buffer_limit
-            || self.container_output_buffer.len() >= self.buffer_limit
     }
 
     async fn flush(&mut self) {

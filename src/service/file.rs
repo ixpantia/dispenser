@@ -67,7 +67,6 @@ pub struct TelemetryConfig {
     pub enabled: bool,
     #[serde(deserialize_with = "deserialize_base_uri")]
     pub base_uri: Url,
-    pub buffer_size: Option<usize>,
     #[serde(default = "default_status_interval")]
     pub status_interval: u64,
 }

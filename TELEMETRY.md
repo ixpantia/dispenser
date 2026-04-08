@@ -28,10 +28,6 @@ base_uri = "s3://my-data-lake/dispenser"
 
 # Optional: How often to sample container status (default: 60 seconds)
 status_interval = 60
-
-# Optional: Number of events to buffer in memory before flushing to storage (default: 1000)
-# Lower values write more frequently (lower latency) but create more small files.
-buffer_size = 1000
 ```
 
 ### Supported Storage Backends
@@ -189,12 +185,7 @@ Captures raw `stdout` and `stderr` streams.
 
 ### Buffering & Latency
 
-The `buffer_size` setting controls the trade-off between latency and file fragmentation.
-
-*   **Small Buffer (e.g., 1-10)**: Events appear in the data lake almost instantly. However, this generates many small Parquet files ("small file problem"), which can degrade query performance and increase storage costs.
-*   **Large Buffer (e.g., 1000-5000)**: Events are batched into larger files. This is much more efficient for query engines (Presto/Trino, Spark) but introduces a delay before data is visible.
-
-Dispenser also enforces a time-based flush every **5 minutes** to ensure data is not held in memory indefinitely during periods of low activity.
+Dispenser enforces a time-based flush every **30 seconds** to ensure data is not held in memory indefinitely during periods of low activity.
 
 ### Resource Isolation
 
