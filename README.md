@@ -36,24 +36,28 @@ Before installing Dispenser, ensure the following are installed on your server:
 
 ## Installation
 
-Download the latest `.deb` or `.rpm` package from the [releases page](https://github.com/ixpantia/dispenser/releases).
+Download the package matching your operating system from the [releases page](https://github.com/ixpantia/dispenser/releases).
 
 ### Debian / Ubuntu
 
-```sh
-# Download the .deb package
-# wget https://github.com/ixpantia/dispenser/releases/download/v0.21.0/dispenser-0.21.0-0.x86_64.deb
+Available for Debian 12, Debian 13, and Ubuntu 24.04.
 
-sudo apt install ./dispenser-0.21.0-0.x86_64.deb
+```sh
+# Example for Ubuntu 24.04
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.21.0/dispenser-0.21.0-0-ubuntu-24.x86_64.deb
+
+sudo apt install ./dispenser-0.21.0-0-ubuntu-24.x86_64.deb
 ```
 
 ### RHEL / CentOS / Fedora
 
-```sh
-# Download the .rpm package
-# wget ...
+Available for RHEL 8 and RHEL 9 (and compatible distributions like Rocky Linux).
 
-sudo dnf install ./dispenser-0.21.0-0.x86_64.rpm
+```sh
+# Example for RHEL 9
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.21.0/dispenser-0.21.0-0.rhel-9.x86_64.rpm
+
+sudo dnf install ./dispenser-0.21.0-0.rhel-9.x86_64.rpm
 ```
 
 The installation process will:
@@ -524,42 +528,26 @@ dispenser -s stop
 
 ## Building from Source
 
-### RPM (RHEL)
+Dispenser uses `just` as a command runner and supports Docker-based builds to ensure compatibility with different operating systems.
 
-Before you try to build an rpm package, make sure you have the following
-installed:
+### Prerequisites
 
-- `cargo`: Rust package manager and build tool
-- `rustc`: Rust compiler
-- `make`: Run make files
-- `rpmbuild`: Tool to build RPMs
+- [Docker](https://docs.docker.com/engine/install/)
+- [Just](https://github.com/casey/just)
 
-Once these dependencies are installed run:
+### Build for a specific OS
 
-```
-make build-rpm
-```
+You can build packages for specific operating systems even if you are not running them locally, as the build process runs inside Docker.
 
-This should create a file called something along the lines of
-`../dispenser-$VERSION.x86_64.rpm`. There may be minor variations on the Linux
-distribution where you are building the package.
+```sh
+# Build for Debian 12
+just build-debian-12
 
-### Deb (Debian & Ubuntu)
+# Build for Ubuntu 24.04
+just build-ubuntu-24
 
-Before you try to build a deb package, make sure you have the following
-installed:
-
-- `cargo`: Rust package manager and build tool
-- `rustc`: Rust compiler
-- `make`: Run make files
-- `dpkg-dev`: Tool to build DEB files
-
-Once these dependencies are installed run:
-
-```
-make build-deb
+# Build for RHEL 9
+just build-rhel-9
 ```
 
-This should create a file called something along the lines of
-`./dispenser.deb`. There may be minor variations on the Linux
-distribution where you are building the package.
+The resulting packages will be named with the OS suffix (e.g., `dispenser-0.21.0-0-ubuntu-24.x86_64.deb`).
