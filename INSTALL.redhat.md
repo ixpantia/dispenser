@@ -18,12 +18,12 @@ can change so please refer to the official documentation.
 
 Download the package matching your operating system:
 
-*   **RHEL 8 / Rocky 8**: `dispenser-0.21.0-0.rhel-8.x86_64.rpm`
-*   **RHEL 9 / Rocky 9**: `dispenser-0.21.0-0.rhel-9.x86_64.rpm`
+*   **RHEL 8 / Rocky 8**: `dispenser-0.22.0-0.rhel-8.x86_64.rpm`
+*   **RHEL 9 / Rocky 9**: `dispenser-0.22.0-0.rhel-9.x86_64.rpm`
 
 ```sh
 # Example for RHEL 9
-sudo dnf install ./dispenser-0.21.0-0.rhel-9.x86_64.rpm
+sudo dnf install ./dispenser-0.22.0-0.rhel-9.x86_64.rpm
 ```
 
 You can validate that it was successfully installed by switching to the

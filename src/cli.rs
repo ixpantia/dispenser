@@ -43,6 +43,9 @@ pub enum Commands {
         /// Telemetry configuration as a JSON string.
         #[arg(long)]
         config: String,
+        /// Run Delta Lake optimization and vacuum operations after flushing
+        #[arg(long)]
+        maintenance: bool,
     },
 }
 

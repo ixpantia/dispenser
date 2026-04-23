@@ -20,6 +20,7 @@ pub struct TelemetryService {
     rx: Receiver<DispenserEvent>,
     writers: TelemetryWriters,
     telemetry_dir: PathBuf,
+    last_maintenance: Instant,
 }
 
 struct TelemetryWriters {
@@ -65,6 +66,7 @@ impl TelemetryService {
             rx,
             writers: TelemetryWriters::new(),
             telemetry_dir,
+            last_maintenance: Instant::now(),
         }
     }
 
@@ -229,14 +231,26 @@ impl TelemetryService {
             }
         };
 
-        let child = match tokio::process::Command::new(exe)
-            .arg("telemetry-flush")
+        let run_maintenance = self.config.maintenance.as_ref().and_then(|m_cfg| {
+            (m_cfg.enabled && self.last_maintenance.elapsed().as_secs() >= m_cfg.interval_seconds)
+                .then(|| {
+                    self.last_maintenance = Instant::now();
+                    true
+                })
+        }).unwrap_or(false);
+
+        let mut cmd = tokio::process::Command::new(exe);
+        cmd.arg("telemetry-flush")
             .arg("--batch-path")
             .arg(&batch_dir)
             .arg("--config")
-            .arg(config_json)
-            .spawn()
-        {
+            .arg(config_json);
+
+        if run_maintenance {
+            cmd.arg("--maintenance");
+        }
+
+        let child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
                 error!("Failed to spawn telemetry worker: {}", e);

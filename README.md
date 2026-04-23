@@ -44,9 +44,9 @@ Available for Debian 12, Debian 13, and Ubuntu 24.04.
 
 ```sh
 # Example for Ubuntu 24.04
-# wget https://github.com/ixpantia/dispenser/releases/download/v0.21.0/dispenser-0.21.0-0-ubuntu-24.x86_64.deb
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.22.0/dispenser-0.22.0-0-ubuntu-24.x86_64.deb
 
-sudo apt install ./dispenser-0.21.0-0-ubuntu-24.x86_64.deb
+sudo apt install ./dispenser-0.22.0-0-ubuntu-24.x86_64.deb
 ```
 
 ### RHEL / CentOS / Fedora
@@ -55,9 +55,9 @@ Available for RHEL 8 and RHEL 9 (and compatible distributions like Rocky Linux).
 
 ```sh
 # Example for RHEL 9
-# wget https://github.com/ixpantia/dispenser/releases/download/v0.21.0/dispenser-0.21.0-0.rhel-9.x86_64.rpm
+# wget https://github.com/ixpantia/dispenser/releases/download/v0.22.0/dispenser-0.22.0-0.rhel-9.x86_64.rpm
 
-sudo dnf install ./dispenser-0.21.0-0.rhel-9.x86_64.rpm
+sudo dnf install ./dispenser-0.22.0-0.rhel-9.x86_64.rpm
 ```
 
 The installation process will:
@@ -550,4 +550,4 @@ just build-ubuntu-24
 just build-rhel-9
 ```
 
-The resulting packages will be named with the OS suffix (e.g., `dispenser-0.21.0-0-ubuntu-24.x86_64.deb`).
+The resulting packages will be named with the OS suffix (e.g., `dispenser-0.22.0-0-ubuntu-24.x86_64.deb`).

@@ -33,7 +33,12 @@ async fn main() -> ExitCode {
     let args = cli::get_cli_args();
 
     // Handle internal telemetry worker command before any other initialization
-    if let Some(Commands::TelemetryFlush { batch_path, config }) = &args.command {
+    if let Some(Commands::TelemetryFlush {
+        batch_path,
+        config,
+        maintenance,
+    }) = &args.command
+    {
         deltalake::aws::register_handlers(None);
         deltalake::azure::register_handlers(None);
         deltalake::gcp::register_handlers(None);
@@ -44,7 +49,8 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        return telemetry::worker::run_worker(batch_path.clone(), telemetry_config).await;
+        return telemetry::worker::run_worker(batch_path.clone(), telemetry_config, *maintenance)
+            .await;
     }
 
     if let Some(signal) = &args.signal {

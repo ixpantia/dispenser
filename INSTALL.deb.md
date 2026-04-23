@@ -16,13 +16,13 @@ can change so please refer to the official documentation.
 
 Download the package matching your operating system:
 
-*   **Debian 12**: `dispenser-0.21.0-0-debian-12.x86_64.deb`
-*   **Debian 13**: `dispenser-0.21.0-0-debian-13.x86_64.deb`
-*   **Ubuntu 24.04**: `dispenser-0.21.0-0-ubuntu-24.x86_64.deb`
+*   **Debian 12**: `dispenser-0.22.0-0-debian-12.x86_64.deb`
+*   **Debian 13**: `dispenser-0.22.0-0-debian-13.x86_64.deb`
+*   **Ubuntu 24.04**: `dispenser-0.22.0-0-ubuntu-24.x86_64.deb`
 
 ```sh
 # Example for Ubuntu 24.04
-sudo apt install ./dispenser-0.21.0-0-ubuntu-24.x86_64.deb
+sudo apt install ./dispenser-0.22.0-0-ubuntu-24.x86_64.deb
 ```
 
 You can validate that it was successfully installed by switching to the
