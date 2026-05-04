@@ -231,13 +231,19 @@ impl TelemetryService {
             }
         };
 
-        let run_maintenance = self.config.maintenance.as_ref().and_then(|m_cfg| {
-            (m_cfg.enabled && self.last_maintenance.elapsed().as_secs() >= m_cfg.interval_seconds)
-                .then(|| {
-                    self.last_maintenance = Instant::now();
-                    true
-                })
-        }).unwrap_or(false);
+        let run_maintenance = self
+            .config
+            .maintenance
+            .as_ref()
+            .and_then(|m_cfg| {
+                (m_cfg.enabled
+                    && self.last_maintenance.elapsed().as_secs() >= m_cfg.interval_seconds)
+                    .then(|| {
+                        self.last_maintenance = Instant::now();
+                        true
+                    })
+            })
+            .unwrap_or(false);
 
         let mut cmd = tokio::process::Command::new(exe);
         cmd.arg("telemetry-flush")

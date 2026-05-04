@@ -341,8 +341,8 @@ impl ServicesManager {
                     config: Arc::new(config),
                     cron_watcher,
                     image_watcher,
-                    telemetry,
-                    log_watcher: Arc::new(tokio::sync::Mutex::new(None)),
+                    telemetry: telemetry.clone(),
+                    last_log_capture: std::sync::atomic::AtomicI64::new(0),
                 };
 
                 (service_name, Arc::new(instance))
@@ -426,6 +426,7 @@ impl ServicesManager {
                         }
 
                         let poll_status = last_status_poll.elapsed() >= status_delay;
+
                         if poll_status {
                             last_status_poll = std::time::Instant::now();
                         }
@@ -434,6 +435,7 @@ impl ServicesManager {
                         let poll_start = std::time::Instant::now();
                         instance.poll(poll_images, poll_status, init).await;
                         let poll_duration = poll_start.elapsed();
+
                         log::debug!(
                             "Polling for {} took {:?}",
                             instance.config.service.name,
@@ -806,7 +808,7 @@ mod tests {
                 cron_watcher: None,
                 image_watcher: None,
                 telemetry: None,
-                log_watcher: Arc::new(tokio::sync::Mutex::new(None)),
+                last_log_capture: std::sync::atomic::AtomicI64::new(0),
             }));
         }
 
