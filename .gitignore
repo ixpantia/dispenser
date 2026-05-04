@@ -7,3 +7,4 @@ rpm/usr/local/bin/dispenser
 *.rpm
 **/**/.DS_Store
 /data
+/stuff
