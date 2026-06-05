@@ -230,17 +230,20 @@ impl ServiceInstance {
                         } else {
                             line.to_string()
                         };
-                        
+
                         // Parse the timestamp. Since timestamp = true
                         // it is the prefix of the line
                         // 2026-05-04T21:11:51.115508805Z <What ever text>
-                        let (timestamp_str, message) = truncated_line.split_once(' ').unwrap_or(("", &truncated_line));
-                        let timestamp = if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(timestamp_str) {
-                            ts.with_timezone(&chrono::Utc)
-                        } else {
-                            log::error!("Unable to parse timestamp from Docker logs.");
-                            chrono::Utc::now()
-                        };
+                        let (timestamp_str, message) = truncated_line
+                            .split_once(' ')
+                            .unwrap_or(("", &truncated_line));
+                        let timestamp =
+                            if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(timestamp_str) {
+                                ts.with_timezone(&chrono::Utc)
+                            } else {
+                                log::error!("Unable to parse timestamp from Docker logs.");
+                                chrono::Utc::now()
+                            };
 
                         telemetry.track_container_output(
                             timestamp,
@@ -315,6 +318,8 @@ impl ServiceInstance {
         let docker = get_docker();
 
         let options: StopContainerOptions = StopContainerOptionsBuilder::new().t(10).build();
+
+        log::info!("Stopping {} container.", self.config.service.name);
 
         match docker
             .stop_container(&self.config.service.name, Some(options))

@@ -191,6 +191,8 @@ impl ServicesManager {
             .cloned()
             .collect();
 
+        log::info!("Preparing to remove the following containers: {removed_services:?}");
+
         self.remove_containers(removed_services).await;
     }
     /// Get a map of service names to their assigned IP addresses.
@@ -479,8 +481,18 @@ impl ServicesManager {
 
             join_set.spawn(async move {
                 if names_clone.contains(&instance.config.service.name) {
-                    let _ = instance.stop_container().await;
-                    let _ = instance.remove_container().await;
+                    if let Err(e) = instance.stop_container().await {
+                        log::error!(
+                            "Unable to stop container {}: {e}",
+                            instance.config.service.name
+                        )
+                    }
+                    if let Err(e) = instance.remove_container().await {
+                        log::error!(
+                            "Unable to remove container {}: {e}",
+                            instance.config.service.name
+                        )
+                    }
                 }
             });
         }
