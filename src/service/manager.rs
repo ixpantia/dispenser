@@ -122,10 +122,10 @@ impl ServicesManager {
             join_set.spawn(async move {
                 match instance.container_does_not_exist().await {
                     true => Ok(()),
-                    false => Err(format!(
-                        "Container {} already exists",
-                        instance.config.service.name
-                    )),
+                    false => {
+                        log::warn!( "Container {} already exists, removing...", instance.config.service.name);
+                        instance.remove_container().await
+                    }
                 }
             });
         }
@@ -137,7 +137,7 @@ impl ServicesManager {
                 }
                 Ok(Err(e)) => {
                     log::error!("Container validation failed: {}", e);
-                    return Err(e);
+                    return Err(e.to_string());
                 }
                 Err(e) => {
                     let error_msg = format!("Task join error: {}", e);
