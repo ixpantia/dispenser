@@ -123,7 +123,10 @@ impl ServicesManager {
                 match instance.container_does_not_exist().await {
                     true => Ok(()),
                     false => {
-                        log::warn!( "Container {} already exists, removing...", instance.config.service.name);
+                        log::warn!(
+                            "Container {} already exists, removing...",
+                            instance.config.service.name
+                        );
                         instance.remove_container().await
                     }
                 }
@@ -337,6 +340,7 @@ impl ServicesManager {
                     depends_on: service_file.depends_on,
                     proxy: service_file.proxy,
                     assigned_ip,
+                    extra_hosts: service_file.extra_hosts,
                 };
 
                 let instance = ServiceInstance {
@@ -633,6 +637,7 @@ mod tests {
             },
             depends_on: HashMap::new(),
             proxy: None,
+            extra_hosts: vec![],
         }
     }
 
@@ -814,6 +819,7 @@ mod tests {
                     key_file: None,
                 }),
                 assigned_ip: Ipv4Addr::new(172, 28, 0, i as u8 + 10),
+                extra_hosts: vec![],
             };
             instances.push(Arc::new(ServiceInstance {
                 config: Arc::new(config),

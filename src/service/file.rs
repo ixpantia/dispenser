@@ -267,6 +267,8 @@ pub struct ServiceFile {
     pub depends_on: HashMap<String, DependsOnCondition>,
     #[serde(default)]
     pub proxy: Option<ProxySettings>,
+    #[serde(default, rename = "extra_host")]
+    pub extra_hosts: Vec<ExtraHostEntry>,
 }
 
 /// Defines when a service should be initialized.
@@ -356,6 +358,13 @@ pub enum Restart {
 pub struct PortEntry {
     pub host: u16,
     pub container: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtraHostEntry {
+    pub hostname: String,
+    pub ipv4: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
