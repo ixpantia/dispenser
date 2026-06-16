@@ -266,6 +266,52 @@ name = "database-network"
 
 The name of the network to connect to. Must match a network declared in `dispenser.toml`.
 
+## Extra Hosts
+
+Add entries to the container's `/etc/hosts` file. Use `[[extra_host]]` for each entry.
+
+```toml
+[[extra_host]]
+hostname = "myhost.local"
+ipv4 = "192.168.1.100"
+
+[[extra_host]]
+hostname = "api.internal"
+ipv4 = "10.0.0.50"
+```
+
+### `hostname` (required)
+
+The hostname to add to the container's `/etc/hosts` file.
+
+### `ipv4` (required)
+
+The IPv4 address for the hostname.
+
+**Example:**
+
+```toml
+[service]
+name = "my-app"
+image = "nginx:latest"
+
+# Add custom host entries
+[[extra_host]]
+hostname = "api.local"
+ipv4 = "192.168.1.100"
+
+[[extra_host]]
+hostname = "api.internal"
+ipv4 = "10.0.0.50"
+
+[dispenser]
+watch = true
+```
+
+This would result in the container having:
+- `api.local:192.168.1.100`
+- `api.internal:10.0.0.50`
+
 ## Restart Policy
 
 Define when Docker should restart the container.

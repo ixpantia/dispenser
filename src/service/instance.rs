@@ -20,8 +20,8 @@ use crate::service::vars::ServiceConfigError;
 use crate::service::{
     docker::get_docker,
     file::{
-        DependsOnCondition, DispenserConfig, Initialize, Network, PortEntry, PullOptions, Restart,
-        ServiceEntry, VolumeEntry,
+        DependsOnCondition, DispenserConfig, ExtraHostEntry, Initialize, Network, PortEntry,
+        PullOptions, Restart, ServiceEntry, VolumeEntry,
     },
     manifest::{ImageWatcher, ImageWatcherStatus},
     network::DEFAULT_NETWORK_NAME,
@@ -42,6 +42,7 @@ pub struct ServiceInstanceConfig {
     /// The static IP address assigned to this service on the dispenser network.
     /// This is managed by dispenser's IPAM to ensure stability across restarts.
     pub assigned_ip: Ipv4Addr,
+    pub extra_hosts: Vec<ExtraHostEntry>,
 }
 
 #[derive(Debug)]
@@ -497,8 +498,12 @@ impl ServiceInstance {
             (cpus * 1_000_000_000.0) as i64
         });
 
-        // Build extra hosts to allow reaching the ingestion service on the host via host.docker.internal
-        let extra_hosts = Some(vec!["host.docker.internal:host-gateway".to_string()]);
+        // Build extra hosts: start with the default host.docker.internal, then add user-defined hosts
+        let mut extra_hosts_vec = vec!["host.docker.internal:host-gateway".to_string()];
+        for host in &self.config.extra_hosts {
+            extra_hosts_vec.push(format!("{}:{}", host.hostname, host.ipv4));
+        }
+        let extra_hosts = Some(extra_hosts_vec);
 
         // Build host config
         // Always connect to the default dispenser network first
