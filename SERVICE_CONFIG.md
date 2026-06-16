@@ -300,14 +300,17 @@ image = "nginx:latest"
 hostname = "api.local"
 ipv4 = "192.168.1.100"
 
+[[extra_host]]
+hostname = "api.internal"
+ipv4 = "10.0.0.50"
+
 [dispenser]
 watch = true
 ```
 
 This would result in the container having:
-- `host.docker.internal:host-gateway` (default, always included)
-- `api.local:192.168.1.100` (user-defined)
-- `db.local:host-gateway` (user-defined)
+- `api.local:192.168.1.100`
+- `api.internal:10.0.0.50`
 
 ## Restart Policy
 
