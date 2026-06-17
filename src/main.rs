@@ -25,7 +25,7 @@ mod telemetry;
 #[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() -> ExitCode {
     dotenv::dotenv().ok();
-    
+
     // Initialize the logger
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -59,7 +59,6 @@ async fn main() -> ExitCode {
     if let Some(signal) = &args.signal {
         return signals::send_signal(signal.clone()).await;
     }
-
 
     let service_filter = match &args.command {
         Some(Commands::Dev { services }) => services.as_ref().map(Vec::as_slice),
