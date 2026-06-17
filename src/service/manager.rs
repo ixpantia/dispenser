@@ -13,7 +13,7 @@ use crate::service::{
     file::{CertbotSettings, EntrypointFile, GlobalProxyConfig, ProxySettings, ServiceFile},
     instance::{ServiceInstance, ServiceInstanceConfig},
     manifest::ImageWatcher,
-    network::{NetworkInstance, ensure_default_network, remove_default_network},
+    network::{NetworkInstance, ensure_default_network, get_used_ips, remove_default_network},
     vars::{ServiceConfigError, ServiceVarsMaterialized, render_template},
 };
 
@@ -301,7 +301,8 @@ impl ServicesManager {
         }
 
         // Allocate IP addresses using "Reserve then Fill" strategy
-        let assigned_ips = allocate_ips(&config.services, existing_ips);
+        // This queries Docker's IPAM to avoid "Address already in use" errors
+        let assigned_ips = allocate_ips(&config.services, existing_ips).await?;
 
         // Iterate through each service entry in the config
         let mut join_set = JoinSet::new();
@@ -541,10 +542,10 @@ fn normalize_path(path: Option<&str>) -> String {
     path
 }
 
-fn allocate_ips(
+async fn allocate_ips(
     services: &[(PathBuf, crate::service::file::ServiceFile)],
     existing_ips: Option<HashMap<String, Ipv4Addr>>,
-) -> HashMap<String, Ipv4Addr> {
+) -> Result<HashMap<String, Ipv4Addr>, ServiceConfigError> {
     let mut assigned: HashMap<String, Ipv4Addr> = HashMap::new();
     let mut used_ips: HashSet<Ipv4Addr> = HashSet::new();
 
@@ -553,6 +554,26 @@ fn allocate_ips(
 
     // Reserve the gateway IP (172.28.0.1)
     used_ips.insert(Ipv4Addr::new(172, 28, 0, 1));
+
+    // Query Docker's IPAM to get IPs actually in use on the network
+    // This is critical for avoiding "Address already in use" errors
+    match get_used_ips().await {
+        Ok(docker_used_ips) => {
+            log::info!(
+                "Found {} IPs in use from Docker IPAM",
+                docker_used_ips.len()
+            );
+            used_ips.extend(docker_used_ips);
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to query Docker IPAM, proceeding with in-memory tracking only: {}",
+                e
+            );
+            // Continue without Docker IPAM data - this allows first-time startup
+            // when the network doesn't exist yet
+        }
+    }
 
     let existing = existing_ips.unwrap_or_default();
 
@@ -603,7 +624,7 @@ fn allocate_ips(
         }
     }
 
-    assigned
+    Ok(assigned)
 }
 
 #[cfg(test)]
@@ -641,15 +662,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_allocate_ips_new_services() {
+    #[tokio::test]
+    async fn test_allocate_ips_new_services() {
         let services = vec![
             (PathBuf::from("/a"), make_service_file("service-a")),
             (PathBuf::from("/b"), make_service_file("service-b")),
             (PathBuf::from("/c"), make_service_file("service-c")),
         ];
 
-        let assigned = allocate_ips(&services, None);
+        let assigned = allocate_ips(&services, None).await.unwrap();
 
         assert_eq!(assigned.len(), 3);
         assert_eq!(
@@ -666,8 +687,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_allocate_ips_preserves_existing() {
+    #[tokio::test]
+    async fn test_allocate_ips_preserves_existing() {
         let services = vec![
             (PathBuf::from("/a"), make_service_file("service-a")),
             (PathBuf::from("/b"), make_service_file("service-b")),
@@ -677,7 +698,7 @@ mod tests {
         let mut existing = HashMap::new();
         existing.insert("service-b".to_string(), Ipv4Addr::new(172, 28, 0, 10));
 
-        let assigned = allocate_ips(&services, Some(existing));
+        let assigned = allocate_ips(&services, Some(existing)).await.unwrap();
 
         assert_eq!(assigned.len(), 3);
         // service-a gets the first available IP
@@ -697,8 +718,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_allocate_ips_skips_used_ips() {
+    #[tokio::test]
+    async fn test_allocate_ips_skips_used_ips() {
         let services = vec![
             (PathBuf::from("/a"), make_service_file("service-a")),
             (PathBuf::from("/b"), make_service_file("service-b")),
@@ -709,7 +730,7 @@ mod tests {
         // Reserve IP .2 for service-b (which is processed second)
         existing.insert("service-b".to_string(), Ipv4Addr::new(172, 28, 0, 2));
 
-        let assigned = allocate_ips(&services, Some(existing));
+        let assigned = allocate_ips(&services, Some(existing)).await.unwrap();
 
         assert_eq!(assigned.len(), 3);
         // service-a should skip .2 (used by service-b) and get .3
@@ -729,15 +750,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_allocate_ips_ignores_stale_existing() {
+    #[tokio::test]
+    async fn test_allocate_ips_ignores_stale_existing() {
         // Test that existing IPs for services no longer in the config are ignored
         let services = vec![(PathBuf::from("/a"), make_service_file("service-a"))];
 
         let mut existing = HashMap::new();
         existing.insert("service-removed".to_string(), Ipv4Addr::new(172, 28, 0, 5));
 
-        let assigned = allocate_ips(&services, Some(existing));
+        let assigned = allocate_ips(&services, Some(existing)).await.unwrap();
 
         assert_eq!(assigned.len(), 1);
         // service-a gets .2 (the removed service's IP is not reserved)
@@ -747,12 +768,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_allocate_ips_gateway_reserved() {
+    #[tokio::test]
+    async fn test_allocate_ips_gateway_reserved() {
         // Ensure gateway IP (172.28.0.1) is never assigned
         let services = vec![(PathBuf::from("/a"), make_service_file("service-a"))];
 
-        let assigned = allocate_ips(&services, None);
+        let assigned = allocate_ips(&services, None).await.unwrap();
 
         assert_eq!(assigned.len(), 1);
         // Should start from .2, not .1 (gateway)
