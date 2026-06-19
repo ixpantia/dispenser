@@ -30,7 +30,8 @@
 //! Networks marked as `external = true` are expected to already exist and won't be created
 //! or removed by the manager.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::net::Ipv4Addr;
 
 use bollard::models::{Ipam, IpamConfig, NetworkCreateRequest};
 use bollard::query_parameters::{InspectNetworkOptions, InspectNetworkOptionsBuilder};
@@ -266,6 +267,54 @@ pub async fn ensure_default_network() -> Result<(), ServiceConfigError> {
 pub async fn remove_default_network() -> Result<(), ServiceConfigError> {
     let default_network = NetworkInstance::default_network();
     default_network.remove_network().await
+}
+
+/// Get the set of IP addresses currently in use by containers on the dispenser network.
+/// This queries Docker's IPAM to find IPs that are actually allocated, including to
+/// stopped containers that still exist.
+///
+/// This is essential for avoiding "Address already in use" errors during reload,
+/// because Docker's IPAM considers IPs in use even by stopped containers.
+pub async fn get_used_ips() -> Result<HashSet<Ipv4Addr>, ServiceConfigError> {
+    let docker = get_docker();
+    let options: InspectNetworkOptions = InspectNetworkOptionsBuilder::new().build();
+
+    match docker
+        .inspect_network(DEFAULT_NETWORK_NAME, Some(options))
+        .await
+    {
+        Ok(network_info) => {
+            let mut used_ips = HashSet::new();
+
+            // Extract IPs from containers connected to the network
+            if let Some(containers) = network_info.containers {
+                for (_container_id, endpoint) in containers {
+                    if let Some(ipv4_address) = endpoint.ipv4_address {
+                        // Parse the IP address (may include CIDR suffix, e.g., "172.28.0.2/16")
+                        let ip_str = ipv4_address.split('/').next().unwrap_or(&ipv4_address);
+                        if let Ok(ip) = ip_str.parse::<Ipv4Addr>() {
+                            used_ips.insert(ip);
+                            log::debug!("Found IP {} in use by container on dispenser network", ip);
+                        }
+                    }
+                }
+            }
+
+            log::info!("Found {} IPs in use on dispenser network", used_ips.len());
+            Ok(used_ips)
+        }
+        Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => {
+            // Network doesn't exist yet, no IPs in use
+            log::debug!("Dispenser network does not exist, no IPs in use");
+            Ok(HashSet::new())
+        }
+        Err(e) => {
+            log::error!("Failed to inspect dispenser network: {}", e);
+            Err(ServiceConfigError::DockerApi(e))
+        }
+    }
 }
 
 #[cfg(test)]

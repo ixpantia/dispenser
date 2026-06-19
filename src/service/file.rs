@@ -69,7 +69,26 @@ pub struct TelemetryConfig {
     pub base_uri: Url,
     #[serde(default = "default_status_interval")]
     pub status_interval: u64,
+    #[serde(default)]
+    pub maintenance: Option<TelemetryMaintenanceConfig>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TelemetryMaintenanceConfig {
+    pub enabled: bool,
+    #[serde(default = "default_maintenance_interval")]
+    pub interval_seconds: u64,
+    #[serde(default = "default_vacuum_retention")]
+    pub retention_hours: u64,
+}
+
+fn default_maintenance_interval() -> u64 {
+    3600
+} // 1 hour
+fn default_vacuum_retention() -> u64 {
+    168
+} // 7 days
 
 /// Deserialize `base_uri` from a string, supporting:
 /// - Cloud storage URIs (`s3://bucket/path`, `gs://...`, `az://...`, `file://...`)
@@ -248,6 +267,8 @@ pub struct ServiceFile {
     pub depends_on: HashMap<String, DependsOnCondition>,
     #[serde(default)]
     pub proxy: Option<ProxySettings>,
+    #[serde(default, rename = "extra_host")]
+    pub extra_hosts: Vec<ExtraHostEntry>,
 }
 
 /// Defines when a service should be initialized.
@@ -337,6 +358,13 @@ pub enum Restart {
 pub struct PortEntry {
     pub host: u16,
     pub container: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtraHostEntry {
+    pub hostname: String,
+    pub ipv4: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

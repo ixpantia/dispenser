@@ -20,8 +20,8 @@ use crate::service::vars::ServiceConfigError;
 use crate::service::{
     docker::get_docker,
     file::{
-        DependsOnCondition, DispenserConfig, Initialize, Network, PortEntry, PullOptions, Restart,
-        ServiceEntry, VolumeEntry,
+        DependsOnCondition, DispenserConfig, ExtraHostEntry, Initialize, Network, PortEntry,
+        PullOptions, Restart, ServiceEntry, VolumeEntry,
     },
     manifest::{ImageWatcher, ImageWatcherStatus},
     network::DEFAULT_NETWORK_NAME,
@@ -42,6 +42,7 @@ pub struct ServiceInstanceConfig {
     /// The static IP address assigned to this service on the dispenser network.
     /// This is managed by dispenser's IPAM to ensure stability across restarts.
     pub assigned_ip: Ipv4Addr,
+    pub extra_hosts: Vec<ExtraHostEntry>,
 }
 
 #[derive(Debug)]
@@ -50,7 +51,7 @@ pub struct ServiceInstance {
     pub cron_watcher: Option<CronWatcher>,
     pub image_watcher: Option<ImageWatcher>,
     pub telemetry: Option<crate::telemetry::TelemetryClient>,
-    pub log_watcher: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    pub last_log_capture: std::sync::atomic::AtomicI64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,82 +168,104 @@ impl ServiceInstance {
             self.config.service.name
         );
 
-        self.start_log_watcher().await;
-
         Ok(())
     }
 
     /// Get the socket address for this service if proxy is configured.
     /// The address is computed directly from the static IP and service port.
-    async fn start_log_watcher(&self) {
+    async fn log_container_output(&self) {
         let telemetry = match &self.telemetry {
             Some(t) => t.clone(),
             None => return,
         };
 
-        let mut log_watcher = self.log_watcher.lock().await;
-        if log_watcher.is_some() {
-            return;
-        }
+        let since_timestamp = self
+            .last_log_capture
+            .load(std::sync::atomic::Ordering::SeqCst);
+
+        // We remove 1 since we want to get all the logs
+        let current_timestamp = chrono::Utc::now().timestamp() - 1;
 
         let container_name = self.config.service.name.clone();
         let service_name = self.config.service.name.clone();
         let docker = get_docker();
 
         let options = Some(LogsOptions {
-            follow: true,
+            follow: false,
             stdout: true,
             stderr: true,
-            tail: "0".to_string(),
+            tail: "all".to_string(),
+            since: since_timestamp as i32,
+            until: current_timestamp as i32,
+            timestamps: true,
             ..Default::default()
         });
 
-        let handle = tokio::spawn(async move {
-            let mut stream = docker.logs(&container_name, options);
+        let mut stream = docker.logs(&container_name, options);
 
-            while let Some(log_result) = stream.next().await {
-                match log_result {
-                    Ok(output) => {
-                        let (stream, message) = match output {
-                            LogOutput::StdOut { message } => ("stdout", message),
-                            LogOutput::StdErr { message } => ("stderr", message),
-                            _ => continue,
+        let mut any_success = false;
+
+        while let Some(log_result) = stream.next().await {
+            match log_result {
+                Ok(output) => {
+                    any_success = true;
+                    let (stream, message) = match output {
+                        LogOutput::StdOut { message } => ("stdout", message),
+                        LogOutput::StdErr { message } => ("stderr", message),
+                        _ => continue,
+                    };
+
+                    let text = String::from_utf8_lossy(&message).to_string();
+                    for line in text.lines() {
+                        if line.is_empty() {
+                            continue;
+                        }
+
+                        // Cap log messages to 4KB to prevent memory exhaustion
+                        let truncated_line = if line.len() > 4096 {
+                            let mut end = 4096;
+                            while !line.is_char_boundary(end) {
+                                end -= 1;
+                            }
+                            format!("{}...[TRUNCATED]", &line[..end])
+                        } else {
+                            line.to_string()
                         };
 
-                        let text = String::from_utf8_lossy(&message).to_string();
-                        for line in text.lines() {
-                            if line.is_empty() {
-                                continue;
-                            }
-
-                            // Cap log messages to 4KB to prevent memory exhaustion
-                            let truncated_line = if line.len() > 4096 {
-                                let mut end = 4096;
-                                while !line.is_char_boundary(end) {
-                                    end -= 1;
-                                }
-                                format!("{}...[TRUNCATED]", &line[..end])
+                        // Parse the timestamp. Since timestamp = true
+                        // it is the prefix of the line
+                        // 2026-05-04T21:11:51.115508805Z <What ever text>
+                        let (timestamp_str, message) = truncated_line
+                            .split_once(' ')
+                            .unwrap_or(("", &truncated_line));
+                        let timestamp =
+                            if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(timestamp_str) {
+                                ts.with_timezone(&chrono::Utc)
                             } else {
-                                line.to_string()
+                                log::error!("Unable to parse timestamp from Docker logs.");
+                                chrono::Utc::now()
                             };
 
-                            telemetry.track_container_output(
-                                service_name.clone(),
-                                container_name.clone(),
-                                stream.to_string(),
-                                truncated_line,
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        log::debug!("Error reading logs for {}: {}", container_name, e);
-                        break;
+                        telemetry.track_container_output(
+                            timestamp,
+                            service_name.clone(),
+                            container_name.clone(),
+                            stream.to_string(),
+                            message.to_string(),
+                        );
                     }
                 }
+                Err(e) => {
+                    log::debug!("Error reading logs for {}: {}", container_name, e);
+                    break;
+                }
             }
-        });
+        }
 
-        *log_watcher = Some(handle);
+        if any_success {
+            self.last_log_capture
+                .store(current_timestamp, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     pub fn get_socket_addr(&self) -> Option<SocketAddrV4> {
@@ -297,6 +320,8 @@ impl ServiceInstance {
 
         let options: StopContainerOptions = StopContainerOptionsBuilder::new().t(10).build();
 
+        log::info!("Stopping {} container.", self.config.service.name);
+
         match docker
             .stop_container(&self.config.service.name, Some(options))
             .await
@@ -340,6 +365,8 @@ impl ServiceInstance {
 
         let options: RemoveContainerOptions =
             RemoveContainerOptionsBuilder::new().force(true).build();
+
+        self.log_container_output().await;
 
         match docker
             .remove_container(&self.config.service.name, Some(options))
@@ -471,8 +498,12 @@ impl ServiceInstance {
             (cpus * 1_000_000_000.0) as i64
         });
 
-        // Build extra hosts to allow reaching the ingestion service on the host via host.docker.internal
-        let extra_hosts = Some(vec!["host.docker.internal:host-gateway".to_string()]);
+        // Build extra hosts: start with the default host.docker.internal, then add user-defined hosts
+        let mut extra_hosts_vec = vec!["host.docker.internal:host-gateway".to_string()];
+        for host in &self.config.extra_hosts {
+            extra_hosts_vec.push(format!("{}:{}", host.hostname, host.ipv4));
+        }
+        let extra_hosts = Some(extra_hosts_vec);
 
         // Build host config
         // Always connect to the default dispenser network first
@@ -740,10 +771,6 @@ impl ServiceInstance {
     }
 
     pub async fn poll(&self, poll_images: bool, poll_status: bool, init: bool) {
-        if poll_status {
-            self.start_log_watcher().await;
-        }
-
         if init && self.config.dispenser.initialize == Initialize::Immediately {
             log::info!("Starting {} immediately", self.config.service.name);
             if let Err(e) = self.run_container(TriggerType::Startup).await {
@@ -770,6 +797,11 @@ impl ServiceInstance {
 
                 return;
             }
+        }
+
+        if poll_status {
+            self.check_and_report_status().await;
+            self.log_container_output().await;
         }
 
         // If its ready to poll images
@@ -804,10 +836,6 @@ impl ServiceInstance {
                     ImageWatcherStatus::NotUpdated => {}
                 }
             }
-        }
-
-        if poll_status {
-            self.check_and_report_status().await;
         }
     }
 }

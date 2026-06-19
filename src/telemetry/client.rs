@@ -95,13 +95,13 @@ impl TelemetryClient {
 
     pub fn track_container_output(
         &self,
+        timestamp: chrono::DateTime<chrono::Utc>,
         service_name: String,
         container_id: String,
         stream: String,
         message: String,
     ) {
-        let now = chrono::Utc::now();
-        let timestamp = now.timestamp_micros();
+        let timestamp = timestamp.timestamp_micros();
 
         let sequence = self
             .container_output_sequence

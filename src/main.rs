@@ -26,6 +26,9 @@ mod telemetry;
 async fn main() -> ExitCode {
     dotenv::dotenv().ok();
 
+    // Initialize the logger
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
@@ -33,7 +36,12 @@ async fn main() -> ExitCode {
     let args = cli::get_cli_args();
 
     // Handle internal telemetry worker command before any other initialization
-    if let Some(Commands::TelemetryFlush { batch_path, config }) = &args.command {
+    if let Some(Commands::TelemetryFlush {
+        batch_path,
+        config,
+        maintenance,
+    }) = &args.command
+    {
         deltalake::aws::register_handlers(None);
         deltalake::azure::register_handlers(None);
         deltalake::gcp::register_handlers(None);
@@ -44,15 +52,13 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        return telemetry::worker::run_worker(batch_path.clone(), telemetry_config).await;
+        return telemetry::worker::run_worker(batch_path.clone(), telemetry_config, *maintenance)
+            .await;
     }
 
     if let Some(signal) = &args.signal {
         return signals::send_signal(signal.clone()).await;
     }
-
-    // Initialize the logger
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let service_filter = match &args.command {
         Some(Commands::Dev { services }) => services.as_ref().map(Vec::as_slice),

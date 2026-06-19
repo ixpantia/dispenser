@@ -16,8 +16,16 @@ use crate::telemetry::buffer::{
 use crate::telemetry::events::DispenserEvent;
 use crate::telemetry::service::TableType;
 
-pub async fn run_worker(batch_path: PathBuf, config: TelemetryConfig) -> ExitCode {
-    log::info!("Telemetry worker started for batch: {:?}", batch_path);
+pub async fn run_worker(
+    batch_path: PathBuf,
+    config: TelemetryConfig,
+    maintenance: bool,
+) -> ExitCode {
+    log::info!(
+        "Telemetry worker started for batch: {:?}, maintenance: {}",
+        batch_path,
+        maintenance
+    );
 
     let entries = match fs::read_dir(&batch_path) {
         Ok(entries) => entries,
@@ -87,6 +95,64 @@ pub async fn run_worker(batch_path: PathBuf, config: TelemetryConfig) -> ExitCod
             log::error!("Failed to cleanup batch directory {:?}: {}", batch_path, e);
             // We still return success as data was written
         }
+
+        if maintenance {
+            if let Some(m_cfg) = &config.maintenance {
+                log::info!("Running maintenance operations on telemetry tables.");
+                let retention_hours = std::cmp::max(m_cfg.retention_hours, 168);
+                let retention_duration = chrono::Duration::hours(retention_hours as i64);
+
+                let tables = vec![
+                    ("deployments", config.table_uri_deployments()),
+                    ("status", config.table_uri_status()),
+                    ("logs", config.table_uri_logs()),
+                    ("traces", config.table_uri_traces()),
+                    ("container_output", config.table_uri_container_output()),
+                ];
+
+                for (name, table_uri) in tables {
+                    log::info!("Starting maintenance for table: {}", name);
+                    match deltalake::open_table(table_uri).await {
+                        Ok(table) => {
+                            // Optimize
+                            let table = match table.optimize().await {
+                                Ok((t, metrics)) => {
+                                    log::info!("Optimize successful for {}: {:?}", name, metrics);
+                                    t
+                                }
+                                Err(e) => {
+                                    log::error!("Optimize failed for {}: {}", name, e);
+                                    continue;
+                                }
+                            };
+
+                            // Vacuum
+                            match table
+                                .vacuum()
+                                .with_retention_period(retention_duration)
+                                .with_enforce_retention_duration(true)
+                                .await
+                            {
+                                Ok((_t, metrics)) => {
+                                    log::info!("Vacuum successful for {}: {:?}", name, metrics);
+                                }
+                                Err(e) => {
+                                    log::error!("Vacuum failed for {}: {}", name, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::info!(
+                                "Table {} may not exist yet, skipping maintenance: {}",
+                                name,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         ExitCode::SUCCESS
     } else {
         log::error!("Some telemetry writes failed. Batch directory NOT deleted.");

@@ -54,7 +54,7 @@ pub async fn create_logs_table(table_uri: &Url) -> Result<DeltaTable, DeltaTable
     CreateBuilder::new()
         .with_location(table_uri.as_str())
         .with_columns(columns)
-        .with_partition_columns(vec!["date"])
+        .with_partition_columns(vec!["service", "date"])
         .with_save_mode(SaveMode::Ignore)
         .with_configuration_property(
             TableProperty::DeletedFileRetentionDuration,

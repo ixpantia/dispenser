@@ -28,6 +28,14 @@ base_uri = "s3://my-data-lake/dispenser"
 
 # Optional: How often to sample container status (default: 60 seconds)
 status_interval = 60
+
+# Optional: Opt-in automated maintenance for Delta tables
+[telemetry.maintenance]
+enabled = true
+# How often to run the maintenance process in seconds (default: 3600 / 1 hour)
+interval_seconds = 3600
+# Retention period for VACUUM. Files older than this will be removed (default: 168 / 7 days)
+retention_hours = 168
 ```
 
 ### Supported Storage Backends
@@ -199,9 +207,18 @@ The telemetry service runs on a dedicated Tokio runtime spawned in a separate OS
 *   **Target File Size**: Dispenser aims for **32MB** Parquet files to balance ingestion latency with query efficiency.
 *   **Data Skipping**: Key columns like `service` and `container_id` are indexed in Delta Lake stats to allow engines to skip irrelevant files.
 
-### Retention Policies
+### Retention Policies & Automated Maintenance
 
 To prevent indefinite storage growth, Dispenser applies the following default retention policies during table creation:
 
 *   **Log Retention**: 30 days (Deployments), 7 days (Status). Delta log history is kept for time-travel queries.
-*   **Deleted Files**: 7 days (Deployments), 1 day (Status). Vacuum operations can reclaim space after this period.
+*   **Deleted Files**: 7 days (Deployments), 1 day (Status).
+
+**Automated Maintenance (`OPTIMIZE` and `VACUUM`)**
+Dispenser includes an opt-in automated maintenance task that runs periodically to keep your Delta tables optimized and to reclaim storage space from old files and improve query performance. 
+
+When `[telemetry.maintenance]` is enabled:
+*   **Auto-Compact (`OPTIMIZE`)**: Compiles small Parquet files into larger, more optimal file sizes to improve query performance.
+*   **Auto-Vacuum (`VACUUM`)**: Permanently deletes old, unreferenced data files that exceed the `retention_hours` threshold. To prevent data corruption, it is strongly recommended to use at least 168 hours (7 days) for retention.
+
+Maintenance operations run in the background as part of the periodic telemetry flush worker, ensuring they do not block or impact the main Dispenser service orchestration.
