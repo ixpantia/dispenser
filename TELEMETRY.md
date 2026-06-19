@@ -9,9 +9,10 @@ The telemetry system runs in a dedicated, isolated thread to ensure that heavy I
 1.  **Deployment Tracking**: Every time a container is created, updated, or restarted, a detailed event is logged.
 2.  **Health Monitoring**: Periodically samples the status of all managed containers (CPU, memory, uptime, health checks).
 3.  **Host CPU Monitoring**: Periodically samples CPU metrics of the host machine (usage, load averages, core count).
-4.  **Application Telemetry (OTLP)**: Ingests structured logs and traces from services using standard OpenTelemetry SDKs.
-5.  **Container Output**: Captures raw `stdout` and `stderr` streams from all managed containers with sequence-guaranteed ordering.
-6.  **Delta Lake Integration**: Writes data using the Delta Lake protocol, enabling ACID transactions, scalable metadata handling, and direct compatibility with tools like Spark, Trino, Athena, and Databricks.
+4.  **Host Memory Monitoring**: Periodically samples memory metrics of the host machine (RAM and swap usage).
+5.  **Application Telemetry (OTLP)**: Ingests structured logs and traces from services using standard OpenTelemetry SDKs.
+6.  **Container Output**: Captures raw `stdout` and `stderr` streams from all managed containers with sequence-guaranteed ordering.
+7.  **Delta Lake Integration**: Writes data using the Delta Lake protocol, enabling ACID transactions, scalable metadata handling, and direct compatibility with tools like Spark, Trino, Athena, and Databricks.
 
 ## Configuration
 
@@ -203,6 +204,23 @@ Records periodic samples of host machine CPU metrics.
 | `load_avg_5m` | `DOUBLE` | System load average over 5 minutes. |
 | `load_avg_15m` | `DOUBLE` | System load average over 15 minutes. |
 | `core_count` | `INTEGER` | Number of CPU cores. |
+
+### Host Memory Table (`dispenser-host-memory`)
+
+Records periodic samples of host machine memory metrics.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `date` | `DATE` | Partition column. Derived from timestamp. |
+| `timestamp` | `TIMESTAMP (UTC)` | Exact time of the sample. |
+| `hostname` | `STRING` | Hostname of the machine. |
+| `total_memory` | `LONG` | Total RAM in bytes. |
+| `used_memory` | `LONG` | Used RAM in bytes. |
+| `available_memory` | `LONG` | Available RAM in bytes. |
+| `memory_usage_percent` | `DOUBLE` | Memory usage as a percentage. |
+| `total_swap` | `LONG` | Total swap space in bytes. |
+| `used_swap` | `LONG` | Used swap space in bytes. |
+| `swap_usage_percent` | `DOUBLE` | Swap usage as a percentage. |
 
 ## Performance Tuning
 
