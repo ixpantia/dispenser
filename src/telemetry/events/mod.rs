@@ -1,11 +1,13 @@
 mod deployment;
 mod host_cpu;
+mod host_disk;
 mod host_memory;
 mod output;
 mod status;
 
 pub use deployment::DeploymentEvent;
 pub use host_cpu::HostCpuEvent;
+pub use host_disk::HostDiskEvent;
 pub use host_memory::HostMemoryEvent;
 pub use output::ContainerOutputEvent;
 pub use status::ContainerStatusEvent;
@@ -23,4 +25,5 @@ pub enum DispenserEvent {
     ContainerOutput(ContainerOutputEvent),
     HostCpu(Box<HostCpuEvent>),
     HostMemory(Box<HostMemoryEvent>),
+    HostDisk(Box<HostDiskEvent>),
 }

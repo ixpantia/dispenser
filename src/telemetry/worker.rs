@@ -11,8 +11,8 @@ use serde_json;
 
 use crate::service::file::TelemetryConfig;
 use crate::telemetry::buffer::{
-    ContainerOutputBuffer, DeploymentsBuffer, HostCpuBuffer, HostMemoryBuffer, LogsBuffer,
-    SpansBuffer, StatusBuffer,
+    ContainerOutputBuffer, DeploymentsBuffer, HostCpuBuffer, HostDiskBuffer, HostMemoryBuffer,
+    LogsBuffer, SpansBuffer, StatusBuffer,
 };
 use crate::telemetry::events::DispenserEvent;
 use crate::telemetry::service::TableType;
@@ -71,6 +71,7 @@ pub async fn run_worker(
             "traces.jsonl" => TableType::Traces,
             "container-output.jsonl" => TableType::ContainerOutput,
             "host-cpu.jsonl" => TableType::HostCpu,
+            "host-disk.jsonl" => TableType::HostDisk,
             "host-memory.jsonl" => TableType::HostMemory,
             _ => {
                 log::warn!("Unknown telemetry file type: {:?}", path);
@@ -85,6 +86,7 @@ pub async fn run_worker(
             TableType::Traces => config.table_uri_traces(),
             TableType::ContainerOutput => config.table_uri_container_output(),
             TableType::HostCpu => config.table_uri_host_cpu(),
+            TableType::HostDisk => config.table_uri_host_disk(),
             TableType::HostMemory => config.table_uri_host_memory(),
         };
 
@@ -114,6 +116,7 @@ pub async fn run_worker(
                     ("traces", config.table_uri_traces()),
                     ("container_output", config.table_uri_container_output()),
                     ("host_cpu", config.table_uri_host_cpu()),
+                    ("host_disk", config.table_uri_host_disk()),
                     ("host_memory", config.table_uri_host_memory()),
                 ];
 
@@ -259,6 +262,19 @@ async fn process_file(
             let mut buffer = HostMemoryBuffer::new(100);
             for line in content.lines() {
                 if let Ok(DispenserEvent::HostMemory(e)) = serde_json::from_str(line) {
+                    buffer.push(&e);
+                    count += 1;
+                }
+            }
+            if !buffer.is_empty() {
+                let batch = buffer.into_record_batch()?;
+                write_to_delta(table_uri, batch, session_state).await?;
+            }
+        }
+        TableType::HostDisk => {
+            let mut buffer = HostDiskBuffer::new(100);
+            for line in content.lines() {
+                if let Ok(DispenserEvent::HostDisk(e)) = serde_json::from_str(line) {
                     buffer.push(&e);
                     count += 1;
                 }
