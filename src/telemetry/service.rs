@@ -1,7 +1,8 @@
 use super::events::DispenserEvent;
 use super::schema::{
     create_container_output_table, create_deployments_table, create_host_cpu_table,
-    create_host_memory_table, create_logs_table, create_status_table, create_traces_table,
+    create_host_disk_table, create_host_memory_table, create_logs_table, create_status_table,
+    create_traces_table,
 };
 use crate::service::file::TelemetryConfig;
 use log::{error, info, warn};
@@ -30,6 +31,7 @@ struct TelemetryWriters {
     traces: Mutex<Option<BufWriter<File>>>,
     container_output: Mutex<Option<BufWriter<File>>>,
     host_cpu: Mutex<Option<BufWriter<File>>>,
+    host_disk: Mutex<Option<BufWriter<File>>>,
     host_memory: Mutex<Option<BufWriter<File>>>,
 }
 
@@ -42,11 +44,12 @@ impl TelemetryWriters {
             traces: Mutex::new(None),
             container_output: Mutex::new(None),
             host_cpu: Mutex::new(None),
+            host_disk: Mutex::new(None),
             host_memory: Mutex::new(None),
         }
     }
 
-    fn all(&self) -> [&Mutex<Option<BufWriter<File>>>; 7] {
+    fn all(&self) -> [&Mutex<Option<BufWriter<File>>>; 8] {
         [
             &self.deployments,
             &self.status,
@@ -54,6 +57,7 @@ impl TelemetryWriters {
             &self.traces,
             &self.container_output,
             &self.host_cpu,
+            &self.host_disk,
             &self.host_memory,
         ]
     }
@@ -122,6 +126,9 @@ impl TelemetryService {
         if let Err(e) = create_host_memory_table(&self.config.table_uri_host_memory()).await {
             error!("Failed to initialize host memory table: {}", e);
         }
+        if let Err(e) = create_host_disk_table(&self.config.table_uri_host_disk()).await {
+            error!("Failed to initialize host disk table: {}", e);
+        }
 
         let mut flush_interval = tokio::time::interval(FLUSH_INTERVAL);
         flush_interval.tick().await;
@@ -158,6 +165,7 @@ impl TelemetryService {
                 (&self.writers.container_output, "container-output.jsonl")
             }
             DispenserEvent::HostCpu(_) => (&self.writers.host_cpu, "host-cpu.jsonl"),
+            DispenserEvent::HostDisk(_) => (&self.writers.host_disk, "host-disk.jsonl"),
             DispenserEvent::HostMemory(_) => (&self.writers.host_memory, "host-memory.jsonl"),
         };
 
@@ -299,6 +307,7 @@ pub enum EventType {
     Traces,
     ContainerOutput,
     HostCpu,
+    HostDisk,
     HostMemory,
 }
 

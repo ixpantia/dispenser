@@ -258,6 +258,11 @@ fn init_telemetry(config: Option<&TelemetryConfig>) -> Option<TelemetryClient> {
     let memory_interval = telemetry_config.status_interval;
     crate::telemetry::spawn_memory_monitor(tx_memory, memory_interval);
 
+    // Spawn Disk monitor for host metrics
+    let tx_disk = tx.clone();
+    let disk_interval = telemetry_config.status_interval;
+    crate::telemetry::spawn_disk_monitor(tx_disk, disk_interval);
+
     // Telemetry Service runs on the main tokio runtime
     tokio::spawn(async move {
         let service = TelemetryService::new(config, rx).await;
