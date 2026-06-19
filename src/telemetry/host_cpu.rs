@@ -56,7 +56,11 @@ pub fn spawn_cpu_monitor(tx: tokio::sync::mpsc::Sender<DispenserEvent>, interval
                 core_count,
             };
 
-            if tx.send(DispenserEvent::HostCpu(Box::new(event))).await.is_err() {
+            if tx
+                .send(DispenserEvent::HostCpu(Box::new(event)))
+                .await
+                .is_err()
+            {
                 log::debug!("CPU monitor: telemetry channel closed, stopping");
                 break;
             }
