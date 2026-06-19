@@ -248,6 +248,11 @@ fn init_telemetry(config: Option<&TelemetryConfig>) -> Option<TelemetryClient> {
         }
     });
 
+    // Spawn CPU monitor for host metrics
+    let tx_cpu = tx.clone();
+    let cpu_interval = telemetry_config.status_interval;
+    crate::telemetry::spawn_cpu_monitor(tx_cpu, cpu_interval);
+
     // Telemetry Service runs on the main tokio runtime
     tokio::spawn(async move {
         let service = TelemetryService::new(config, rx).await;

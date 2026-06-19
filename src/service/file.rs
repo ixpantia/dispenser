@@ -153,6 +153,9 @@ impl TelemetryConfig {
     pub fn table_uri_container_output(&self) -> Url {
         self.table_url("container-output")
     }
+    pub fn table_uri_host_cpu(&self) -> Url {
+        self.table_url("host-cpu")
+    }
 }
 
 fn default_status_interval() -> u64 {
