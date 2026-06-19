@@ -1,8 +1,10 @@
 mod deployment;
+mod host_cpu;
 mod output;
 mod status;
 
 pub use deployment::DeploymentEvent;
+pub use host_cpu::HostCpuEvent;
 pub use output::ContainerOutputEvent;
 pub use status::ContainerStatusEvent;
 
@@ -17,4 +19,5 @@ pub enum DispenserEvent {
     LogBatch(ExportLogsServiceRequest),
     SpanBatch(ExportTraceServiceRequest),
     ContainerOutput(ContainerOutputEvent),
+    HostCpu(Box<HostCpuEvent>),
 }

@@ -1,7 +1,7 @@
 use super::events::DispenserEvent;
 use super::schema::{
-    create_container_output_table, create_deployments_table, create_logs_table,
-    create_status_table, create_traces_table,
+    create_container_output_table, create_deployments_table, create_host_cpu_table,
+    create_logs_table, create_status_table, create_traces_table,
 };
 use crate::service::file::TelemetryConfig;
 use log::{error, info, warn};
@@ -29,6 +29,7 @@ struct TelemetryWriters {
     logs: Mutex<Option<BufWriter<File>>>,
     traces: Mutex<Option<BufWriter<File>>>,
     container_output: Mutex<Option<BufWriter<File>>>,
+    host_cpu: Mutex<Option<BufWriter<File>>>,
 }
 
 impl TelemetryWriters {
@@ -39,16 +40,18 @@ impl TelemetryWriters {
             logs: Mutex::new(None),
             traces: Mutex::new(None),
             container_output: Mutex::new(None),
+            host_cpu: Mutex::new(None),
         }
     }
 
-    fn all(&self) -> [&Mutex<Option<BufWriter<File>>>; 5] {
+    fn all(&self) -> [&Mutex<Option<BufWriter<File>>>; 6] {
         [
             &self.deployments,
             &self.status,
             &self.logs,
             &self.traces,
             &self.container_output,
+            &self.host_cpu,
         ]
     }
 }
@@ -110,6 +113,9 @@ impl TelemetryService {
         {
             error!("Failed to initialize container output table: {}", e);
         }
+        if let Err(e) = create_host_cpu_table(&self.config.table_uri_host_cpu()).await {
+            error!("Failed to initialize host CPU table: {}", e);
+        }
 
         let mut flush_interval = tokio::time::interval(FLUSH_INTERVAL);
         flush_interval.tick().await;
@@ -145,6 +151,7 @@ impl TelemetryService {
             DispenserEvent::ContainerOutput(_) => {
                 (&self.writers.container_output, "container-output.jsonl")
             }
+            DispenserEvent::HostCpu(_) => (&self.writers.host_cpu, "host-cpu.jsonl"),
         };
 
         let mut writer_opt = self.get_or_open_writer(writer_mutex, filename).await;
@@ -284,6 +291,7 @@ pub enum EventType {
     Logs,
     Traces,
     ContainerOutput,
+    HostCpu,
 }
 
 pub type TableType = EventType;

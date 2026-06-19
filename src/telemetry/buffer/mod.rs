@@ -1,5 +1,6 @@
 mod container_output;
 mod deployments;
+mod host_cpu;
 pub mod json;
 mod logs;
 mod status;
@@ -7,6 +8,7 @@ mod traces;
 
 pub use container_output::ContainerOutputBuffer;
 pub use deployments::DeploymentsBuffer;
+pub use host_cpu::HostCpuBuffer;
 pub use logs::LogsBuffer;
 pub use status::StatusBuffer;
 pub use traces::SpansBuffer;

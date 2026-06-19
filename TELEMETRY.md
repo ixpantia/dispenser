@@ -8,9 +8,10 @@ The telemetry system runs in a dedicated, isolated thread to ensure that heavy I
 
 1.  **Deployment Tracking**: Every time a container is created, updated, or restarted, a detailed event is logged.
 2.  **Health Monitoring**: Periodically samples the status of all managed containers (CPU, memory, uptime, health checks).
-3.  **Application Telemetry (OTLP)**: Ingests structured logs and traces from services using standard OpenTelemetry SDKs.
-4.  **Container Output**: Captures raw `stdout` and `stderr` streams from all managed containers with sequence-guaranteed ordering.
-5.  **Delta Lake Integration**: Writes data using the Delta Lake protocol, enabling ACID transactions, scalable metadata handling, and direct compatibility with tools like Spark, Trino, Athena, and Databricks.
+3.  **Host CPU Monitoring**: Periodically samples CPU metrics of the host machine (usage, load averages, core count).
+4.  **Application Telemetry (OTLP)**: Ingests structured logs and traces from services using standard OpenTelemetry SDKs.
+5.  **Container Output**: Captures raw `stdout` and `stderr` streams from all managed containers with sequence-guaranteed ordering.
+6.  **Delta Lake Integration**: Writes data using the Delta Lake protocol, enabling ACID transactions, scalable metadata handling, and direct compatibility with tools like Spark, Trino, Athena, and Databricks.
 
 ## Configuration
 
@@ -188,6 +189,20 @@ Captures raw `stdout` and `stderr` streams.
 | `stream` | `STRING` | `stdout` or `stderr`. |
 | `message` | `STRING` | The raw log line. |
 | `sequence` | `LONG` | Monotonically increasing counter for perfect ordering. |
+
+### Host CPU Table (`dispenser-host-cpu`)
+
+Records periodic samples of host machine CPU metrics.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `date` | `DATE` | Partition column. Derived from timestamp. |
+| `timestamp` | `TIMESTAMP (UTC)` | Exact time of the sample. |
+| `hostname` | `STRING` | Hostname of the machine. |
+| `load_avg_1m` | `DOUBLE` | System load average over 1 minute. |
+| `load_avg_5m` | `DOUBLE` | System load average over 5 minutes. |
+| `load_avg_15m` | `DOUBLE` | System load average over 15 minutes. |
+| `core_count` | `INTEGER` | Number of CPU cores. |
 
 ## Performance Tuning
 
