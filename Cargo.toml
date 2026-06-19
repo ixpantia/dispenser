@@ -52,7 +52,7 @@ chrono = "0.4.44"
 arrow = "57.3.0"
 url = "2.5.8"
 tikv-jemallocator = { version = "0.6.1", features = ["profiling", "stats", "override_allocator_on_supported_platforms"] }
-sysinfo = "0.33"
+sysinfo = "0.39"
 
 [dev-dependencies]
 quickcheck = "1.1.0"
