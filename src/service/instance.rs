@@ -275,74 +275,38 @@ impl ServiceInstance {
     }
 
     pub async fn pull_image(&self) -> Result<(), ServiceConfigError> {
-        log::info!("Pulling image: {}", self.config.service.image.full_path);
-        let docker = get_docker();
+        use bollard::errors::Error;
+        match self.pull_image_internal().await {
+            Err(ServiceConfigError::DockerApi(Error::DockerStreamError { error }))
+                if error.contains("AlreadyExists") =>
+            {
+                log::warn!(
+                    "Snapshot already exists error for {}, attempting recovery...",
+                    self.config.service.image.full_path
+                );
 
-        // Parse image name and tag
-        let credentials =
-            crate::service::docker::get_credentials(&self.config.service.image.registry).await;
-
-        let options: CreateImageOptions = CreateImageOptionsBuilder::new()
-            .from_image(&self.config.service.image.full_path)
-            .tag(&self.config.service.image.tag)
-            .build();
-
-        let mut stream = docker.create_image(Some(options), None, credentials);
-
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(info) => {
-                    if let Some(status) = info.status {
-                        log::debug!("Pull status: {}", status);
-                    }
-                }
-                Err(e) => {
-                    use bollard::errors::Error;
-
-                    if let Error::DockerStreamError { error } = &e {
-                        if error.contains("AlreadyExists")
-                        {
-                            log::warn!(
-                                "Snapshot already exists error for {}, attempting recovery...",
-                                self.config.service.image.full_path
-                            );
-
-                            // Check if the image already exists locally
-                            if self.image_exists_locally().await {
-                                log::info!(
-                                    "Image {} already exists locally, continuing...",
-                                    self.config.service.image.full_path
-                                );
-                                return Ok(());
-                            }
-
-                            // Image doesn't exist locally, try to remove old image and retry once
-                            log::info!(
-                                "Attempting to remove and re-pull image {}",
-                                self.config.service.image.full_path
-                            );
-                            let _ = self.remove_image().await;
-
-                            // Retry the pull once
-                            return self.pull_image_internal().await;
-                        }
-                    }
-
-                    log::error!(
-                        "Failed to pull image {}: {}",
-                        self.config.service.image.full_path,
-                        e
+                // Check if the image already exists locally
+                if self.image_exists_locally().await {
+                    log::info!(
+                        "Image {} already exists locally, continuing...",
+                        self.config.service.image.full_path
                     );
-                    return Err(ServiceConfigError::DockerApi(e));
+                    return Ok(());
                 }
-            }
-        }
 
-        log::info!(
-            "Image {} pulled successfully",
-            self.config.service.image.full_path
-        );
-        Ok(())
+                // Image doesn't exist locally, try to remove old image and retry once
+                log::info!(
+                    "Attempting to remove and re-pull image {}",
+                    self.config.service.image.full_path
+                );
+                let _ = self.remove_image().await;
+
+                // Retry the pull once
+                self.pull_image_internal().await
+            }
+            Err(e) => Err(e),
+            Ok(_) => Ok(()),
+        }
     }
 
     /// Internal pull implementation without the AlreadyExists retry logic

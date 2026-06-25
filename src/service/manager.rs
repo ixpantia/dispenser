@@ -54,7 +54,7 @@ impl ServiceMangerConfig {
             // Parse the rendered config as TOML
             let service_file: ServiceFile = toml::from_str(&rendered_service)?;
 
-                services.push((entry.path.clone(), service_file));
+            services.push((entry.path.clone(), service_file));
         }
 
         // Check for duplicate service names
@@ -78,11 +78,7 @@ fn validate_unique_service_names(
         if let Some(existing_path) = seen_names.get(service_name) {
             return Err(ServiceConfigError::DuplicateServiceId {
                 name: service_name.clone(),
-                paths: format!(
-                    "  - {}\n  - {}",
-                    existing_path.display(),
-                    path.display()
-                ),
+                paths: format!("  - {}\n  - {}", existing_path.display(), path.display()),
             });
         }
         seen_names.insert(service_name.clone(), path.clone());
@@ -1041,8 +1037,14 @@ mod tests {
     fn test_validate_unique_service_names_detects_duplicates() {
         // Create two service files with the same name
         let services = vec![
-            (PathBuf::from("/service-a"), make_service_file("duplicate-name")),
-            (PathBuf::from("/service-b"), make_service_file("duplicate-name")),
+            (
+                PathBuf::from("/service-a"),
+                make_service_file("duplicate-name"),
+            ),
+            (
+                PathBuf::from("/service-b"),
+                make_service_file("duplicate-name"),
+            ),
         ];
 
         // Validate should return an error
