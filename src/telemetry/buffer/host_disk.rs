@@ -49,7 +49,8 @@ impl HostDiskBuffer {
         self.file_system.append_value(&event.file_system);
         self.total_space.append_value(event.total_space as i64);
         self.used_space.append_value(event.used_space as i64);
-        self.available_space.append_value(event.available_space as i64);
+        self.available_space
+            .append_value(event.available_space as i64);
         self.usage_percent.append_value(event.usage_percent);
 
         self.count += 1;

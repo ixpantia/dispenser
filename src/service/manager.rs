@@ -56,11 +56,34 @@ impl ServiceMangerConfig {
 
             services.push((entry.path.clone(), service_file));
         }
+
+        // Check for duplicate service names
+        validate_unique_service_names(&services)?;
+
         Ok(Self {
             services,
             entrypoint_file,
         })
     }
+}
+
+/// Validates that all service names are unique.
+/// Returns an error if duplicate service names are found.
+fn validate_unique_service_names(
+    services: &[(PathBuf, ServiceFile)],
+) -> Result<(), ServiceConfigError> {
+    let mut seen_names: HashMap<String, PathBuf> = HashMap::new();
+    for (path, service_file) in services {
+        let service_name = &service_file.service.name;
+        if let Some(existing_path) = seen_names.get(service_name) {
+            return Err(ServiceConfigError::DuplicateServiceId {
+                name: service_name.clone(),
+                paths: format!("  - {}\n  - {}", existing_path.display(), path.display()),
+            });
+        }
+        seen_names.insert(service_name.clone(), path.clone());
+    }
+    Ok(())
 }
 
 struct HostRoute {
@@ -1008,5 +1031,57 @@ mod tests {
         let res: Result<ServiceFile, _> = toml::from_str(toml_content);
         assert!(res.is_ok());
         assert_eq!(res.unwrap().service.restart, Restart::Always);
+    }
+
+    #[test]
+    fn test_validate_unique_service_names_detects_duplicates() {
+        // Create two service files with the same name
+        let services = vec![
+            (
+                PathBuf::from("/service-a"),
+                make_service_file("duplicate-name"),
+            ),
+            (
+                PathBuf::from("/service-b"),
+                make_service_file("duplicate-name"),
+            ),
+        ];
+
+        // Validate should return an error
+        let result = validate_unique_service_names(&services);
+        assert!(result.is_err());
+
+        // Verify the error contains expected information
+        let error = result.unwrap_err();
+        match error {
+            ServiceConfigError::DuplicateServiceId { name, paths } => {
+                assert_eq!(name, "duplicate-name");
+                assert!(paths.contains("/service-a"));
+                assert!(paths.contains("/service-b"));
+            }
+            _ => panic!("Expected DuplicateServiceId error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_unique_service_names_passes_for_unique_names() {
+        // Create service files with unique names
+        let services = vec![
+            (PathBuf::from("/service-a"), make_service_file("service-a")),
+            (PathBuf::from("/service-b"), make_service_file("service-b")),
+            (PathBuf::from("/service-c"), make_service_file("service-c")),
+        ];
+
+        // Validate should pass
+        let result = validate_unique_service_names(&services);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_unique_service_names_empty_list() {
+        // Empty services list should pass
+        let services: Vec<(PathBuf, ServiceFile)> = vec![];
+        let result = validate_unique_service_names(&services);
+        assert!(result.is_ok());
     }
 }

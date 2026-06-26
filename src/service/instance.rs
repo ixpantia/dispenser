@@ -275,10 +275,44 @@ impl ServiceInstance {
     }
 
     pub async fn pull_image(&self) -> Result<(), ServiceConfigError> {
-        log::info!("Pulling image: {}", self.config.service.image.full_path);
+        use bollard::errors::Error;
+        match self.pull_image_internal().await {
+            Err(ServiceConfigError::DockerApi(Error::DockerStreamError { error }))
+                if error.contains("AlreadyExists") =>
+            {
+                log::warn!(
+                    "Snapshot already exists error for {}, attempting recovery...",
+                    self.config.service.image.full_path
+                );
+
+                // Check if the image already exists locally
+                if self.image_exists_locally().await {
+                    log::info!(
+                        "Image {} already exists locally, continuing...",
+                        self.config.service.image.full_path
+                    );
+                    return Ok(());
+                }
+
+                // Image doesn't exist locally, try to remove old image and retry once
+                log::info!(
+                    "Attempting to remove and re-pull image {}",
+                    self.config.service.image.full_path
+                );
+                let _ = self.remove_image().await;
+
+                // Retry the pull once
+                self.pull_image_internal().await
+            }
+            Err(e) => Err(e),
+            Ok(_) => Ok(()),
+        }
+    }
+
+    /// Internal pull implementation without the AlreadyExists retry logic
+    async fn pull_image_internal(&self) -> Result<(), ServiceConfigError> {
         let docker = get_docker();
 
-        // Parse image name and tag
         let credentials =
             crate::service::docker::get_credentials(&self.config.service.image.registry).await;
 
@@ -312,6 +346,53 @@ impl ServiceInstance {
             self.config.service.image.full_path
         );
         Ok(())
+    }
+
+    /// Check if the configured image already exists locally
+    async fn image_exists_locally(&self) -> bool {
+        let docker = get_docker();
+        let image_ref = format!(
+            "{}:{}",
+            self.config.service.image.full_path, self.config.service.image.tag
+        );
+
+        match docker.inspect_image(&image_ref).await {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Remove the configured image from local storage
+    async fn remove_image(&self) -> Result<(), ServiceConfigError> {
+        let docker = get_docker();
+        let image_ref = format!(
+            "{}:{}",
+            self.config.service.image.full_path, self.config.service.image.tag
+        );
+
+        match docker
+            .remove_image(
+                &image_ref,
+                None::<bollard::query_parameters::RemoveImageOptions>,
+                None,
+            )
+            .await
+        {
+            Ok(_) => {
+                log::info!("Removed image {}", image_ref);
+                Ok(())
+            }
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {
+                log::debug!("Image {} not found, nothing to remove", image_ref);
+                Ok(())
+            }
+            Err(e) => {
+                log::warn!("Failed to remove image {}: {}", image_ref, e);
+                Err(ServiceConfigError::DockerApi(e))
+            }
+        }
     }
 
     pub async fn stop_container(&self) -> Result<(), ServiceConfigError> {
