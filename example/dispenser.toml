@@ -4,6 +4,12 @@ delay = 60
 [proxy]
 enabled = true
 
+# Configuration for the default dispenser network (optional)
+# Uncomment to customize the subnet and gateway for the default network
+# [default_network]
+# subnet = "10.10.0.0/16"
+# gateway = "10.10.0.1"
+
 [telemetry]
 enabled = true
 base_uri = "telem"

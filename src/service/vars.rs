@@ -202,6 +202,8 @@ pub enum ServiceConfigError {
     NetworkNotFound(String),
     #[error("Duplicate service id '{name}' found in multiple locations:\n{paths}")]
     DuplicateServiceId { name: String, paths: String },
+    #[error("Configuration error: {0}")]
+    Config(String),
 }
 
 impl From<FromUtf8Error> for ServiceConfigError {

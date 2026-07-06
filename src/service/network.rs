@@ -39,7 +39,7 @@ use bollard::query_parameters::{InspectNetworkOptions, InspectNetworkOptionsBuil
 use crate::service::vars::ServiceConfigError;
 use crate::service::{
     docker::get_docker,
-    file::{NetworkDeclarationEntry, NetworkDriver},
+    file::{DefaultNetworkConfig, NetworkDeclarationEntry, NetworkDriver},
 };
 
 /// The name of the default dispenser network that all containers are connected to.
@@ -87,22 +87,41 @@ impl From<NetworkDeclarationEntry> for NetworkInstance {
 }
 
 impl NetworkInstance {
-    /// Create the default dispenser network instance.
+    /// Create the default dispenser network instance with default settings.
     /// This network is automatically created and all containers are connected to it.
+    /// Panics if the default configuration is invalid (should never happen).
     pub fn default_network() -> Self {
+        Self::default_network_with_config(DefaultNetworkConfig::default())
+            .expect("Default network configuration should always be valid")
+    }
+
+    /// Create the default dispenser network instance with custom configuration.
+    /// This network is automatically created and all containers are connected to it.
+    /// Returns an error if the subnet configuration is invalid.
+    pub fn default_network_with_config(config: DefaultNetworkConfig) -> Result<Self, ServiceConfigError> {
         let mut labels = HashMap::new();
         labels.insert("managed-by".to_string(), "dispenser".to_string());
 
-        Self {
+        let subnet = config.subnet.unwrap_or_else(|| DEFAULT_NETWORK_SUBNET.to_string());
+        let gateway = match config.gateway {
+            Some(g) => g,
+            None => {
+                // Default gateway is the first IP in the subnet
+                // For a subnet like "172.28.0.0/16", the gateway would be "172.28.0.1"
+                derive_gateway_from_subnet(&subnet)?
+            }
+        };
+
+        Ok(Self {
             name: DEFAULT_NETWORK_NAME.to_string(),
             driver: NetworkDriver::Bridge,
             external: false,
             internal: false,
             attachable: true,
             labels,
-            subnet: Some(DEFAULT_NETWORK_SUBNET.to_string()),
-            gateway: Some(DEFAULT_NETWORK_GATEWAY.to_string()),
-        }
+            subnet: Some(subnet),
+            gateway: Some(gateway),
+        })
     }
 
     /// Check if a network exists using bollard
@@ -255,11 +274,111 @@ impl NetworkInstance {
     }
 }
 
-/// Ensure the default dispenser network exists.
+/// Derive the gateway IP from a subnet CIDR string.
+/// For a subnet like "172.28.0.0/16", the gateway would be "172.28.0.1".
+/// For "10.10.0.0/24", it would be "10.10.0.1".
+/// Returns an error if the subnet is not valid CIDR notation.
+fn derive_gateway_from_subnet(subnet: &str) -> Result<String, ServiceConfigError> {
+    // Parse the CIDR notation (e.g., "172.28.0.0/16")
+    let parts: Vec<&str> = subnet.split('/').collect();
+    if parts.len() != 2 {
+        return Err(ServiceConfigError::Config(format!(
+            "Invalid subnet CIDR notation '{}': expected format 'X.X.X.X/Y'",
+            subnet
+        )));
+    }
+
+    // Validate the prefix part (must be a valid number between 0 and 32)
+    let prefix: u8 = parts[1].parse::<u8>().map_err(|_| {
+        ServiceConfigError::Config(format!(
+            "Invalid prefix '{}' in subnet '{}': expected a number between 0 and 32",
+            parts[1], subnet
+        ))
+    })?;
+    if prefix > 32 {
+        return Err(ServiceConfigError::Config(format!(
+            "Invalid prefix '{}' in subnet '{}': must be between 0 and 32",
+            parts[1], subnet
+        )));
+    }
+
+    // Parse the IP part
+    let ip_parts: Vec<&str> = parts[0].split('.').collect();
+    if ip_parts.len() != 4 {
+        return Err(ServiceConfigError::Config(format!(
+            "Invalid IP address in subnet '{}': expected format 'X.X.X.X/Y'",
+            subnet
+        )));
+    }
+
+    // Validate that each octet is a valid number
+    for (i, part) in ip_parts.iter().enumerate() {
+        if part.parse::<u8>().is_err() {
+            return Err(ServiceConfigError::Config(format!(
+                "Invalid octet '{}' in subnet '{}'",
+                ip_parts[i], subnet
+            )));
+        }
+    }
+
+    // The gateway is the first usable IP (network address + 1)
+    Ok(format!("{}.{}.{}.1", ip_parts[0], ip_parts[1], ip_parts[2]))
+}
+
+/// Ensure the default dispenser network exists with default settings.
 /// This should be called during manager initialization before any containers are created.
+#[allow(dead_code)]
 pub async fn ensure_default_network() -> Result<(), ServiceConfigError> {
     let default_network = NetworkInstance::default_network();
     default_network.ensure_exists().await
+}
+
+/// Ensure the default dispenser network exists with custom configuration.
+/// This should be called during manager initialization before any containers are created.
+/// If the network already exists with a different subnet, a warning is logged.
+pub async fn ensure_default_network_with_config(
+    config: DefaultNetworkConfig,
+) -> Result<(), ServiceConfigError> {
+    let default_network = NetworkInstance::default_network_with_config(config.clone())?;
+
+    // Check if network already exists
+    let docker = get_docker();
+    let options: InspectNetworkOptions = InspectNetworkOptionsBuilder::new().build();
+
+    match docker
+        .inspect_network(DEFAULT_NETWORK_NAME, Some(options))
+        .await
+    {
+        Ok(network_info) => {
+            // Network exists - check if subnet matches configuration
+            let existing_subnet = network_info
+                .ipam
+                .and_then(|ipam| ipam.config)
+                .and_then(|configs| configs.into_iter().next())
+                .and_then(|c| c.subnet);
+
+            if let (Some(existing), Some(desired)) = (&existing_subnet, &config.subnet) {
+                if existing != desired {
+                    log::warn!(
+                        "Default network '{}' exists with subnet {} but config specifies {}. \
+                         Subnet change requires a full restart (stop dispenser and start again). \
+                         Continuing with existing network configuration.",
+                        DEFAULT_NETWORK_NAME, existing, desired
+                    );
+                }
+            }
+
+            log::debug!("Default network {} already exists", DEFAULT_NETWORK_NAME);
+            Ok(())
+        }
+        Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => {
+            // Network doesn't exist, create it
+            default_network.create_network().await
+        }
+        Err(e) => Err(ServiceConfigError::DockerApi(e)),
+    }
 }
 
 /// Remove the default dispenser network.
@@ -363,5 +482,84 @@ mod tests {
         assert_eq!(network.labels, labels);
         assert_eq!(network.subnet, None);
         assert_eq!(network.gateway, None);
+    }
+
+    #[test]
+    fn test_derive_gateway_from_subnet() {
+        assert_eq!(
+            derive_gateway_from_subnet("172.28.0.0/16").unwrap(),
+            "172.28.0.1"
+        );
+        assert_eq!(
+            derive_gateway_from_subnet("10.10.0.0/24").unwrap(),
+            "10.10.0.1"
+        );
+        assert_eq!(
+            derive_gateway_from_subnet("192.168.1.0/24").unwrap(),
+            "192.168.1.1"
+        );
+    }
+
+    #[test]
+    fn test_derive_gateway_from_subnet_invalid() {
+        // Invalid CIDR should return an error
+        assert!(derive_gateway_from_subnet("invalid").is_err());
+        assert!(derive_gateway_from_subnet("172.28.0.0").is_err()); // Missing /prefix
+        assert!(derive_gateway_from_subnet("172.28.0.0/").is_err()); // Empty prefix
+        assert!(derive_gateway_from_subnet("/16").is_err()); // Missing IP
+        assert!(derive_gateway_from_subnet("172.28.0/16").is_err()); // Only 3 octets
+        assert!(derive_gateway_from_subnet("172.28.0.0.1/16").is_err()); // 5 octets
+        assert!(derive_gateway_from_subnet("172.28.0.256/16").is_err()); // Invalid octet > 255
+    }
+
+    #[test]
+    fn test_default_network_with_config() {
+        let config = DefaultNetworkConfig {
+            subnet: Some("10.10.0.0/16".to_string()),
+            gateway: Some("10.10.0.254".to_string()),
+        };
+
+        let network = NetworkInstance::default_network_with_config(config).unwrap();
+
+        assert_eq!(network.name, DEFAULT_NETWORK_NAME);
+        assert_eq!(network.subnet, Some("10.10.0.0/16".to_string()));
+        assert_eq!(network.gateway, Some("10.10.0.254".to_string()));
+    }
+
+    #[test]
+    fn test_default_network_with_config_subnet_only() {
+        let config = DefaultNetworkConfig {
+            subnet: Some("10.20.0.0/16".to_string()),
+            gateway: None,
+        };
+
+        let network = NetworkInstance::default_network_with_config(config).unwrap();
+
+        assert_eq!(network.name, DEFAULT_NETWORK_NAME);
+        assert_eq!(network.subnet, Some("10.20.0.0/16".to_string()));
+        // Gateway should be derived from subnet
+        assert_eq!(network.gateway, Some("10.20.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_default_network_with_empty_config() {
+        let config = DefaultNetworkConfig::default();
+
+        let network = NetworkInstance::default_network_with_config(config).unwrap();
+
+        assert_eq!(network.name, DEFAULT_NETWORK_NAME);
+        assert_eq!(network.subnet, Some(DEFAULT_NETWORK_SUBNET.to_string()));
+        assert_eq!(network.gateway, Some(DEFAULT_NETWORK_GATEWAY.to_string()));
+    }
+
+    #[test]
+    fn test_default_network_with_invalid_subnet() {
+        let config = DefaultNetworkConfig {
+            subnet: Some("invalid".to_string()),
+            gateway: None,
+        };
+
+        // Should return an error for invalid subnet
+        assert!(NetworkInstance::default_network_with_config(config).is_err());
     }
 }

@@ -22,6 +22,23 @@ pub struct EntrypointFile {
     pub delay: u64,
     pub certbot: Option<CertbotSettings>,
     pub telemetry: Option<TelemetryConfig>,
+    /// Configuration for the default dispenser network
+    #[serde(default)]
+    pub default_network: DefaultNetworkConfig,
+}
+
+/// Configuration for the default dispenser network.
+/// Allows customizing the subnet and gateway for the automatically created
+/// "dispenser" network that all containers are connected to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DefaultNetworkConfig {
+    /// The subnet for the default network in CIDR notation (e.g., "172.28.0.0/16").
+    /// Defaults to "172.28.0.0/16" if not specified.
+    pub subnet: Option<String>,
+    /// The gateway IP for the default network.
+    /// Defaults to the first IP in the subnet (e.g., "172.28.0.1") if not specified.
+    pub gateway: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
