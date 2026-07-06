@@ -11,18 +11,78 @@ Dispenser supports Docker networks to enable communication between services. Net
 Dispenser automatically creates and manages a default network called `dispenser` that **all containers are connected to**. This network provides:
 
 - **Automatic inter-container communication**: All containers can communicate with each other using their service names as hostnames
-- **Predictable IP addresses**: The network uses a dedicated subnet (`172.28.0.0/16`) with gateway `172.28.0.1`
+- **Predictable IP addresses**: The network uses a dedicated subnet (default: `172.28.0.0/16`) with a configurable gateway
 - **No configuration required**: The network is created automatically when Dispenser starts and removed on shutdown
 
 ### Network Details
 
-| Property | Value |
-|----------|-------|
+| Property | Default Value |
+|----------|---------------|
 | Name | `dispenser` |
 | Driver | `bridge` |
 | Subnet | `172.28.0.0/16` |
 | Gateway | `172.28.0.1` |
 | Attachable | `true` |
+
+### Customizing the Default Network
+
+You can customize the subnet and gateway of the default dispenser network by adding a `[default_network]` section to your `dispenser.toml`:
+
+```toml
+# dispenser.toml
+[default_network]
+subnet = "10.10.0.0/16"  # Optional: Custom subnet in CIDR notation
+gateway = "10.10.0.1"    # Optional: Custom gateway IP
+```
+
+#### Configuration Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `subnet` | No | The subnet for the default network in CIDR notation (e.g., `10.10.0.0/16`). Defaults to `172.28.0.0/16`. |
+| `gateway` | No | The gateway IP address for the network. Defaults to the first usable IP in the subnet (X.X.X.1). |
+
+#### Gateway Auto-Derivation
+
+If you specify a `subnet` but omit `gateway`, the gateway is automatically derived as the first usable IP address in the subnet:
+
+| Subnet | Auto-Derived Gateway |
+|--------|---------------------|
+| `172.28.0.0/16` | `172.28.0.1` |
+| `10.10.0.0/16` | `10.10.0.1` |
+| `192.168.1.0/24` | `192.168.1.1` |
+
+#### Error Handling
+
+Invalid configurations will cause Dispenser to return an error at startup:
+
+- **Invalid CIDR format**: Subnet must be in `X.X.X.X/Y` format where each octet is 0-255 and the prefix is 0-32
+- **Invalid gateway**: Gateway must be a valid IPv4 address
+- **Gateway outside subnet**: The gateway should be within the specified subnet range
+
+### Reloading Behavior
+
+When you reload Dispenser (e.g., via SIGHUP or file watch changes), the default network configuration has special behavior:
+
+1. **Network already exists with matching configuration**: No action needed, continues normally.
+
+2. **Network already exists with different subnet**: Dispenser logs a warning and continues with the existing network configuration. The subnet change will not take effect until a full restart.
+
+   ```
+   WARN Default network 'dispenser' exists with subnet 172.28.0.0/16 but config specifies 10.10.0.0/16.
+        Subnet change requires a full restart (stop dispenser and start again).
+        Continuing with existing network configuration.
+   ```
+
+3. **Network doesn't exist**: The network is created with the configured (or default) subnet and gateway.
+
+**To change the default network subnet:**
+
+1. Stop Dispenser completely (the network is automatically removed on clean shutdown)
+2. Update your `dispenser.toml` with the new `[default_network]` configuration
+3. Start Dispenser again
+
+> **Note**: If Dispenser didn't shut down cleanly (e.g., was killed or crashed), the network may still exist. Remove it manually with `docker network rm dispenser` before starting again.
 
 ### Accessing Containers by IP
 
@@ -449,11 +509,18 @@ The `dispenser` network is automatically created when Dispenser starts. If you e
    docker network rm dispenser
    ```
 
-2. **Subnet conflict**: The default subnet `172.28.0.0/16` may conflict with existing networks. Check for conflicts:
-   ```sh
-   docker network ls
-   docker network inspect dispenser
-   ```
+2. **Subnet conflict**: The default subnet `172.28.0.0/16` may conflict with existing networks on your system. You have two options:
+   
+   - **Customize the subnet**: Add a `[default_network]` section to your `dispenser.toml` with a different subnet:
+     ```toml
+     [default_network]
+     subnet = "10.10.0.0/16"
+     ```
+   - **Check for conflicts**:
+     ```sh
+     docker network ls
+     docker network inspect dispenser
+     ```
 
 3. **Viewing container IPs on the dispenser network**:
    ```sh
