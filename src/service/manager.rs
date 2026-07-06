@@ -10,10 +10,10 @@ use tokio::{sync::Mutex, task::JoinSet};
 
 use crate::service::{
     cron_watcher::CronWatcher,
-    file::{CertbotSettings, EntrypointFile, GlobalProxyConfig, ProxySettings, ServiceFile},
+    file::{CertbotSettings, DefaultNetworkConfig, EntrypointFile, GlobalProxyConfig, ProxySettings, ServiceFile},
     instance::{ServiceInstance, ServiceInstanceConfig},
     manifest::ImageWatcher,
-    network::{NetworkInstance, ensure_default_network, get_used_ips, remove_default_network},
+    network::{NetworkInstance, ensure_default_network_with_config, get_used_ips, remove_default_network},
     vars::{ServiceConfigError, ServiceVarsMaterialized, render_template},
 };
 
@@ -283,7 +283,8 @@ impl ServicesManager {
 
         // Ensure the default dispenser network exists first
         // This network is used by all containers for inter-container communication
-        if let Err(e) = ensure_default_network().await {
+        let default_network_config = config.entrypoint_file.default_network.clone();
+        if let Err(e) = ensure_default_network_with_config(default_network_config).await {
             log::error!("Failed to ensure default dispenser network exists: {}", e);
             return Err(e);
         }
@@ -325,7 +326,8 @@ impl ServicesManager {
 
         // Allocate IP addresses using "Reserve then Fill" strategy
         // This queries Docker's IPAM to avoid "Address already in use" errors
-        let assigned_ips = allocate_ips(&config.services, existing_ips).await?;
+        let default_network_config = config.entrypoint_file.default_network.clone();
+        let assigned_ips = allocate_ips(&config.services, existing_ips, &default_network_config).await?;
 
         // Iterate through each service entry in the config
         let mut join_set = JoinSet::new();
@@ -568,15 +570,37 @@ fn normalize_path(path: Option<&str>) -> String {
 async fn allocate_ips(
     services: &[(PathBuf, crate::service::file::ServiceFile)],
     existing_ips: Option<HashMap<String, Ipv4Addr>>,
+    config: &DefaultNetworkConfig,
 ) -> Result<HashMap<String, Ipv4Addr>, ServiceConfigError> {
     let mut assigned: HashMap<String, Ipv4Addr> = HashMap::new();
     let mut used_ips: HashSet<Ipv4Addr> = HashSet::new();
 
-    // Base IP: 172.28.0.0
-    let base_ip: u32 = u32::from(Ipv4Addr::new(172, 28, 0, 0));
+    // Parse the subnet from config or use default
+    let subnet = config.subnet.as_deref().unwrap_or("172.28.0.0/16");
+    let gateway = config.gateway.as_deref().unwrap_or("172.28.0.1");
 
-    // Reserve the gateway IP (172.28.0.1)
-    used_ips.insert(Ipv4Addr::new(172, 28, 0, 1));
+    // Parse the base IP from the subnet CIDR (e.g., "172.28.0.0/16" -> 172.28.0.0)
+    let base_ip: u32 = if let Some(ip_str) = subnet.split('/').next() {
+        ip_str.parse::<Ipv4Addr>()
+            .map(|ip| u32::from(ip))
+            .map_err(|_| ServiceConfigError::Config(format!(
+                "Invalid IP address in subnet '{}': expected format 'X.X.X.X/Y'",
+                subnet
+            )))?
+    } else {
+        return Err(ServiceConfigError::Config(format!(
+            "Invalid subnet CIDR notation '{}': expected format 'X.X.X.X/Y'",
+            subnet
+        )));
+    };
+
+    // Reserve the gateway IP
+    let gateway_ip: Ipv4Addr = gateway.parse::<Ipv4Addr>()
+        .map_err(|_| ServiceConfigError::Config(format!(
+            "Invalid gateway IP address '{}'",
+            gateway
+        )))?;
+    used_ips.insert(gateway_ip);
 
     // Query Docker's IPAM to get IPs actually in use on the network
     // This is critical for avoiding "Address already in use" errors
@@ -693,7 +717,8 @@ mod tests {
             (PathBuf::from("/c"), make_service_file("service-c")),
         ];
 
-        let assigned = allocate_ips(&services, None).await.unwrap();
+        let config = DefaultNetworkConfig::default();
+        let assigned = allocate_ips(&services, None, &config).await.unwrap();
 
         assert_eq!(assigned.len(), 3);
         assert_eq!(
@@ -721,7 +746,8 @@ mod tests {
         let mut existing = HashMap::new();
         existing.insert("service-b".to_string(), Ipv4Addr::new(172, 28, 0, 10));
 
-        let assigned = allocate_ips(&services, Some(existing)).await.unwrap();
+        let config = DefaultNetworkConfig::default();
+        let assigned = allocate_ips(&services, Some(existing), &config).await.unwrap();
 
         assert_eq!(assigned.len(), 3);
         // service-a gets the first available IP
@@ -753,7 +779,8 @@ mod tests {
         // Reserve IP .2 for service-b (which is processed second)
         existing.insert("service-b".to_string(), Ipv4Addr::new(172, 28, 0, 2));
 
-        let assigned = allocate_ips(&services, Some(existing)).await.unwrap();
+        let config = DefaultNetworkConfig::default();
+        let assigned = allocate_ips(&services, Some(existing), &config).await.unwrap();
 
         assert_eq!(assigned.len(), 3);
         // service-a should skip .2 (used by service-b) and get .3
@@ -781,7 +808,8 @@ mod tests {
         let mut existing = HashMap::new();
         existing.insert("service-removed".to_string(), Ipv4Addr::new(172, 28, 0, 5));
 
-        let assigned = allocate_ips(&services, Some(existing)).await.unwrap();
+        let config = DefaultNetworkConfig::default();
+        let assigned = allocate_ips(&services, Some(existing), &config).await.unwrap();
 
         assert_eq!(assigned.len(), 1);
         // service-a gets .2 (the removed service's IP is not reserved)
@@ -796,13 +824,39 @@ mod tests {
         // Ensure gateway IP (172.28.0.1) is never assigned
         let services = vec![(PathBuf::from("/a"), make_service_file("service-a"))];
 
-        let assigned = allocate_ips(&services, None).await.unwrap();
+        let config = DefaultNetworkConfig::default();
+        let assigned = allocate_ips(&services, None, &config).await.unwrap();
 
         assert_eq!(assigned.len(), 1);
         // Should start from .2, not .1 (gateway)
         assert_eq!(
             assigned.get("service-a"),
             Some(&Ipv4Addr::new(172, 28, 0, 2))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_allocate_ips_custom_subnet() {
+        let services = vec![
+            (PathBuf::from("/a"), make_service_file("service-a")),
+            (PathBuf::from("/b"), make_service_file("service-b")),
+        ];
+
+        let config = DefaultNetworkConfig {
+            subnet: Some("10.10.0.0/16".to_string()),
+            gateway: Some("10.10.0.1".to_string()),
+        };
+        let assigned = allocate_ips(&services, None, &config).await.unwrap();
+
+        assert_eq!(assigned.len(), 2);
+        // With custom subnet 10.10.0.0/16, IPs should be 10.10.0.2, 10.10.0.3
+        assert_eq!(
+            assigned.get("service-a"),
+            Some(&Ipv4Addr::new(10, 10, 0, 2))
+        );
+        assert_eq!(
+            assigned.get("service-b"),
+            Some(&Ipv4Addr::new(10, 10, 0, 3))
         );
     }
 
