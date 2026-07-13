@@ -139,6 +139,38 @@ For local development or environments without public DNS, you can run Dispenser 
 dispenser dev -s my-app
 ```
 
+### Default Fallback Certificate
+
+When no host-specific SSL certificate matches an incoming request, Dispenser uses a default fallback certificate. This is a self-signed certificate that is automatically generated on first startup.
+
+#### Location
+
+| Installation Type | Path |
+| :--- | :--- |
+| Relative (development) | `.dispenser/default.crt` and `.dispenser/default.key` |
+| System installation | `/opt/dispenser/.dispenser/default.crt` and `/opt/dispenser/.dispenser/default.key` |
+
+#### Customizing the Default Certificate
+
+You can replace the auto-generated default certificate with your own certificate and key pair. This is useful when you want to:
+
+- Use a certificate from your internal Certificate Authority
+- Provide a wildcard certificate as a fallback
+- Avoid browser warnings for requests that don't match a specific SNI
+
+To customize, simply replace the files at the location above with your own PEM-encoded certificate and key:
+
+```bash
+# Example for a system installation
+sudo cp /path/to/your/certificate.crt /opt/dispenser/.dispenser/default.crt
+sudo cp /path/to/your/private.key /opt/dispenser/.dispenser/default.key
+sudo chown dispenser:dispenser /opt/dispenser/.dispenser/default.crt /opt/dispenser/.dispenser/default.key
+sudo systemctl restart dispenser
+```
+
+> [!NOTE]
+> After replacing the default certificate files, you must restart Dispenser for the changes to take effect.
+
 ## How Routing Works
 
 1.  **Request Arrival**: A request arrives at Dispenser on port 443.
