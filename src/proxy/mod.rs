@@ -112,8 +112,13 @@ impl ProxyHttp for DispenserProxy {
         upstream_request: &mut RequestHeader,
         _ctx: &mut Self::CTX,
     ) -> Result<()> {
-        let proto = if self.is_ssl { "https" } else { "http" };
-        upstream_request.insert_header("X-Forwarded-Proto", HeaderValue::from_static(proto))?;
+        // Only set X-Forwarded-Proto if we don't trust existing headers or if it's not present
+        if !self.trust_forwarded_headers
+            || upstream_request.headers.get("X-Forwarded-Proto").is_none()
+        {
+            let proto = if self.is_ssl { "https" } else { "http" };
+            upstream_request.insert_header("X-Forwarded-Proto", HeaderValue::from_static(proto))?;
+        }
 
         if let Some(client_addr) = session.client_addr() {
             let client_ip = match client_addr {
