@@ -88,6 +88,12 @@ pub struct TelemetryConfig {
     pub status_interval: u64,
     #[serde(default)]
     pub maintenance: Option<TelemetryMaintenanceConfig>,
+    #[serde(default = "default_max_pending_batches")]
+    pub max_pending_batches: u32,
+    #[serde(default = "default_max_pending_size_mb")]
+    pub max_pending_size_mb: u64,
+    #[serde(default = "default_worker_timeout_secs")]
+    pub worker_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -183,6 +189,18 @@ impl TelemetryConfig {
 
 fn default_status_interval() -> u64 {
     60
+}
+
+fn default_max_pending_batches() -> u32 {
+    2880
+} // ~1 day of batches at a 30s flush interval
+
+fn default_max_pending_size_mb() -> u64 {
+    1024
+}
+
+fn default_worker_timeout_secs() -> u64 {
+    300
 }
 
 fn default_delay() -> u64 {
@@ -672,6 +690,40 @@ base_uri = "{base_uri}"
         assert_eq!(
             config.table_uri_deployments().as_str(),
             "gs://my-bucket/telemetry/deployments"
+        );
+    }
+
+    #[test]
+    fn test_telemetry_config_az_uri() {
+        let config = parse_telemetry_config("az://my-container/dispenser");
+        assert_eq!(
+            config.table_uri_deployments().as_str(),
+            "az://my-container/dispenser/deployments"
+        );
+        assert_eq!(
+            config.table_uri_status().as_str(),
+            "az://my-container/dispenser/status"
+        );
+        assert_eq!(
+            config.table_uri_logs().as_str(),
+            "az://my-container/dispenser/logs"
+        );
+        assert_eq!(
+            config.table_uri_traces().as_str(),
+            "az://my-container/dispenser/traces"
+        );
+        assert_eq!(
+            config.table_uri_container_output().as_str(),
+            "az://my-container/dispenser/container-output"
+        );
+    }
+
+    #[test]
+    fn test_telemetry_config_az_uri_trailing_slash() {
+        let config = parse_telemetry_config("az://my-container/dispenser/");
+        assert_eq!(
+            config.table_uri_deployments().as_str(),
+            "az://my-container/dispenser/deployments"
         );
     }
 
