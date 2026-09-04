@@ -49,9 +49,6 @@ pub const DEFAULT_NETWORK_NAME: &str = "dispenser";
 /// This provides a /16 network with 65,534 usable host addresses.
 pub const DEFAULT_NETWORK_SUBNET: &str = "172.28.0.0/16";
 
-/// The gateway IP for the default dispenser network.
-pub const DEFAULT_NETWORK_GATEWAY: &str = "172.28.0.1";
-
 pub struct NetworkInstance {
     pub name: String,
     pub driver: NetworkDriver,
@@ -98,11 +95,15 @@ impl NetworkInstance {
     /// Create the default dispenser network instance with custom configuration.
     /// This network is automatically created and all containers are connected to it.
     /// Returns an error if the subnet configuration is invalid.
-    pub fn default_network_with_config(config: DefaultNetworkConfig) -> Result<Self, ServiceConfigError> {
+    pub fn default_network_with_config(
+        config: DefaultNetworkConfig,
+    ) -> Result<Self, ServiceConfigError> {
         let mut labels = HashMap::new();
         labels.insert("managed-by".to_string(), "dispenser".to_string());
 
-        let subnet = config.subnet.unwrap_or_else(|| DEFAULT_NETWORK_SUBNET.to_string());
+        let subnet = config
+            .subnet
+            .unwrap_or_else(|| DEFAULT_NETWORK_SUBNET.to_string());
         let gateway = match config.gateway {
             Some(g) => g,
             None => {
@@ -363,7 +364,9 @@ pub async fn ensure_default_network_with_config(
                         "Default network '{}' exists with subnet {} but config specifies {}. \
                          Subnet change requires a full restart (stop dispenser and start again). \
                          Continuing with existing network configuration.",
-                        DEFAULT_NETWORK_NAME, existing, desired
+                        DEFAULT_NETWORK_NAME,
+                        existing,
+                        desired
                     );
                 }
             }
@@ -439,6 +442,8 @@ pub async fn get_used_ips() -> Result<HashSet<Ipv4Addr>, ServiceConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    pub const DEFAULT_NETWORK_GATEWAY: &str = "172.28.0.1";
 
     #[test]
     fn test_default_network() {

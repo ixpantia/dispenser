@@ -5,6 +5,7 @@ use log::error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::error::TrySendError;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -123,10 +124,14 @@ impl TelemetryClient {
         // Use try_send to avoid blocking the main loop.
         // If the channel is full, we drop the event and log an error.
         if let Err(e) = self.tx.try_send(event) {
-            error!(
-                "Failed to send telemetry event (channel full or closed): {:?}",
-                e
-            );
+            match e {
+                TrySendError::Full(_) => {
+                    error!("Failed to send telemetry event (channel full)");
+                }
+                TrySendError::Closed(_) => {
+                    error!("Failed to send telemetry event (channel closed)");
+                }
+            }
         }
     }
 }

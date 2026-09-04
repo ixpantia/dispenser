@@ -37,9 +37,6 @@ pub enum Commands {
     /// Internal command to flush telemetry data (worker process).
     #[command(hide = true)]
     TelemetryFlush {
-        /// Path to the directory containing the batch of JSONL files.
-        #[arg(long)]
-        batch_path: PathBuf,
         /// Telemetry configuration as a JSON string.
         #[arg(long)]
         config: String,
@@ -84,5 +81,37 @@ mod tests {
             nix::sys::signal::Signal::from(Signal::Stop),
             nix::sys::signal::Signal::SIGINT
         );
+    }
+
+    #[test]
+    fn telemetry_flush_parses_without_batch_path() {
+        let args = Args::try_parse_from([
+            "dispenser",
+            "telemetry-flush",
+            "--config",
+            "{\"enabled\":true,\"base_uri\":\"file:///tmp/tables\"}",
+            "--maintenance",
+        ])
+        .expect("telemetry-flush should parse");
+        assert!(matches!(
+            args.command,
+            Some(Commands::TelemetryFlush {
+                maintenance: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn telemetry_flush_rejects_batch_path_arg() {
+        let result = Args::try_parse_from([
+            "dispenser",
+            "telemetry-flush",
+            "--batch-path",
+            "/tmp/batch",
+            "--config",
+            "{}",
+        ]);
+        assert!(result.is_err(), "--batch-path should no longer be accepted");
     }
 }
