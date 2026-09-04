@@ -1,13 +1,15 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use deltalake::DeltaTable;
 use deltalake::datafusion::catalog::Session;
 use deltalake::datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use deltalake::delta_datafusion::DeltaSessionContext;
 use serde_json;
+use tokio::io::AsyncReadExt;
 
 use crate::service::file::TelemetryConfig;
 use crate::telemetry::buffer::{
@@ -17,24 +19,25 @@ use crate::telemetry::buffer::{
 use crate::telemetry::events::DispenserEvent;
 use crate::telemetry::service::TableType;
 
-pub async fn run_worker(
-    batch_path: PathBuf,
-    config: TelemetryConfig,
-    maintenance: bool,
-) -> ExitCode {
+pub async fn run_worker(config: TelemetryConfig, maintenance: bool) -> ExitCode {
+    let mut stdin = tokio::io::stdin();
+    let mut input = String::new();
+    if let Err(e) = stdin.read_to_string(&mut input).await {
+        log::error!("Failed to read telemetry batch paths from stdin: {}", e);
+        return ExitCode::FAILURE;
+    }
+
+    let batch_paths = parse_batch_paths(&input);
+    if batch_paths.is_empty() {
+        log::info!("No telemetry batches to process.");
+        return ExitCode::SUCCESS;
+    }
+
     log::info!(
-        "Telemetry worker started for batch: {:?}, maintenance: {}",
-        batch_path,
+        "Telemetry worker started for {} batch(es), maintenance: {}",
+        batch_paths.len(),
         maintenance
     );
-
-    let entries = match fs::read_dir(&batch_path) {
-        Ok(entries) => entries,
-        Err(e) => {
-            log::error!("Failed to read batch directory: {}", e);
-            return ExitCode::FAILURE;
-        }
-    };
 
     let runtime_env = match RuntimeEnvBuilder::new()
         .with_memory_limit(64 * 1024 * 1024, 1.0) // 64MB limit
@@ -50,58 +53,43 @@ pub async fn run_worker(
     let session_state = Arc::new(DeltaSessionContext::with_runtime_env(runtime_env.into()).state())
         as Arc<dyn Session>;
 
-    let mut success = true;
+    let batch_timeout = Duration::from_secs(config.worker_timeout_secs);
+    let mut all_succeeded = true;
 
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
-            continue;
-        }
-
-        let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        let table_type = match filename {
-            "deployments.jsonl" => TableType::Deployments,
-            "status.jsonl" => TableType::Status,
-            "logs.jsonl" => TableType::Logs,
-            "traces.jsonl" => TableType::Traces,
-            "container-output.jsonl" => TableType::ContainerOutput,
-            "host-cpu.jsonl" => TableType::HostCpu,
-            "host-disk.jsonl" => TableType::HostDisk,
-            "host-memory.jsonl" => TableType::HostMemory,
-            _ => {
-                log::warn!("Unknown telemetry file type: {:?}", path);
-                continue;
+    // Batches are assigned oldest-first. Stop at the first failure so the
+    // failed batch stays at the head of the queue for the next worker to
+    // retry, preserving the oldest-first ordering.
+    for batch_path in &batch_paths {
+        let result = tokio::time::timeout(
+            batch_timeout,
+            process_batch(batch_path, &config, &session_state),
+        )
+        .await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                log::error!(
+                    "Failed to process telemetry batch {:?}: {}. Batch kept for retry.",
+                    batch_path,
+                    e
+                );
+                all_succeeded = false;
+                break;
             }
-        };
-
-        let table_uri = match table_type {
-            TableType::Deployments => config.table_uri_deployments(),
-            TableType::Status => config.table_uri_status(),
-            TableType::Logs => config.table_uri_logs(),
-            TableType::Traces => config.table_uri_traces(),
-            TableType::ContainerOutput => config.table_uri_container_output(),
-            TableType::HostCpu => config.table_uri_host_cpu(),
-            TableType::HostDisk => config.table_uri_host_disk(),
-            TableType::HostMemory => config.table_uri_host_memory(),
-        };
-
-        if let Err(e) = process_file(&path, &table_uri, table_type, &session_state).await {
-            log::error!("Failed to process file {:?}: {}", path, e);
-            success = false;
+            Err(_) => {
+                log::error!(
+                    "Telemetry batch {:?} timed out after {:?}. Batch kept for retry.",
+                    batch_path,
+                    batch_timeout
+                );
+                all_succeeded = false;
+                break;
+            }
         }
     }
 
-    if success {
-        log::info!("Successfully processed all telemetry files in batch.");
-        if let Err(e) = fs::remove_dir_all(&batch_path) {
-            log::error!("Failed to cleanup batch directory {:?}: {}", batch_path, e);
-            // We still return success as data was written
-        }
+    if all_succeeded {
+        log::info!("Successfully processed all assigned telemetry batches.");
 
         if maintenance {
             if let Some(m_cfg) = &config.maintenance {
@@ -165,9 +153,98 @@ pub async fn run_worker(
 
         ExitCode::SUCCESS
     } else {
-        log::error!("Some telemetry writes failed. Batch directory NOT deleted.");
+        log::error!("Some telemetry batches were not processed. Batch directories NOT deleted.");
         ExitCode::FAILURE
     }
+}
+
+fn parse_batch_paths(input: &str) -> Vec<PathBuf> {
+    input
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+async fn process_batch(
+    batch_path: &Path,
+    config: &TelemetryConfig,
+    session_state: &Arc<dyn Session>,
+) -> Result<(), String> {
+    let entries = match fs::read_dir(batch_path) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // The batch was evicted or cleaned up while this worker was
+            // starting; there is nothing left to do for it.
+            log::warn!(
+                "Telemetry batch {:?} no longer exists, skipping.",
+                batch_path
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(format!("failed to read batch directory: {}", e));
+        }
+    };
+
+    let mut success = true;
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+
+        let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let table_type = match filename {
+            "deployments.jsonl" => TableType::Deployments,
+            "status.jsonl" => TableType::Status,
+            "logs.jsonl" => TableType::Logs,
+            "traces.jsonl" => TableType::Traces,
+            "container-output.jsonl" => TableType::ContainerOutput,
+            "host-cpu.jsonl" => TableType::HostCpu,
+            "host-disk.jsonl" => TableType::HostDisk,
+            "host-memory.jsonl" => TableType::HostMemory,
+            _ => {
+                log::warn!("Unknown telemetry file type: {:?}", path);
+                continue;
+            }
+        };
+
+        let table_uri = match table_type {
+            TableType::Deployments => config.table_uri_deployments(),
+            TableType::Status => config.table_uri_status(),
+            TableType::Logs => config.table_uri_logs(),
+            TableType::Traces => config.table_uri_traces(),
+            TableType::ContainerOutput => config.table_uri_container_output(),
+            TableType::HostCpu => config.table_uri_host_cpu(),
+            TableType::HostDisk => config.table_uri_host_disk(),
+            TableType::HostMemory => config.table_uri_host_memory(),
+        };
+
+        if let Err(e) = process_file(&path, &table_uri, table_type, session_state).await {
+            log::error!("Failed to process file {:?}: {}", path, e);
+            success = false;
+        }
+    }
+
+    if !success {
+        return Err("some telemetry writes failed".to_string());
+    }
+
+    log::info!("Successfully processed all telemetry files in batch.");
+    if let Err(e) = fs::remove_dir_all(batch_path) {
+        log::error!("Failed to cleanup batch directory {:?}: {}", batch_path, e);
+        // We still return success as data was written
+    }
+
+    Ok(())
 }
 
 async fn process_file(
@@ -310,4 +387,37 @@ async fn write_to_delta(
         ])
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_multiple_paths_in_order() {
+        let input = "/tmp/batch-1\n/tmp/batch-2\n/tmp/batch-3\n";
+        assert_eq!(
+            parse_batch_paths(input),
+            vec![
+                PathBuf::from("/tmp/batch-1"),
+                PathBuf::from("/tmp/batch-2"),
+                PathBuf::from("/tmp/batch-3"),
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_blank_lines_and_trims_whitespace() {
+        let input = "  /tmp/a  \n\n\t\n/tmp/b\n   ";
+        assert_eq!(
+            parse_batch_paths(input),
+            vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]
+        );
+    }
+
+    #[test]
+    fn empty_input_yields_no_paths() {
+        assert!(parse_batch_paths("").is_empty());
+        assert!(parse_batch_paths("\n\n  \n").is_empty());
+    }
 }

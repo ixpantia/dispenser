@@ -232,6 +232,10 @@ Dispenser enforces a time-based flush every **30 seconds** to ensure data is not
 
 The telemetry service runs on a dedicated Tokio runtime spawned in a separate OS thread. This design ensures that network latency when talking to S3/GCS or CPU-intensive compression of Parquet files does not impact the responsiveness of the main Dispenser loop or the reverse proxy.
 
+### Background Flushing
+
+Flushed batches are spooled under `.dispenser/telemetry/pending/` and drained by a dedicated worker subprocess that is handed **all pending batches at once, oldest-first**. The worker processes them sequentially, enforcing the `worker_timeout_secs` budget **per batch**. If a batch fails to write, the worker stops and the failed batch — along with any batches after it — is kept on disk and retried on the next flush cycle, preserving the oldest-first ordering. If the queue grows beyond `max_pending_batches` or `max_pending_size_mb`, the oldest batches are evicted first.
+
 ## Data Management
 
 ### Partitioning & Optimization

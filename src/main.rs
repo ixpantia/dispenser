@@ -37,7 +37,6 @@ async fn main() -> ExitCode {
 
     // Handle internal telemetry worker command before any other initialization
     if let Some(Commands::TelemetryFlush {
-        batch_path,
         config,
         maintenance,
     }) = &args.command
@@ -52,8 +51,7 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        return telemetry::worker::run_worker(batch_path.clone(), telemetry_config, *maintenance)
-            .await;
+        return telemetry::worker::run_worker(telemetry_config, *maintenance).await;
     }
 
     if let Some(signal) = &args.signal {

@@ -5,14 +5,15 @@ use super::schema::{
     create_traces_table,
 };
 use crate::service::file::TelemetryConfig;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::Receiver;
 use uuid::Uuid;
 
@@ -32,7 +33,6 @@ pub struct TelemetryService {
     telemetry_dir: PathBuf,
     last_maintenance: Instant,
     worker_active: Arc<AtomicBool>,
-    drain_notify: Arc<Notify>,
 }
 
 struct TelemetryWriters {
@@ -99,7 +99,6 @@ impl TelemetryService {
             telemetry_dir,
             last_maintenance: Instant::now(),
             worker_active: Arc::new(AtomicBool::new(false)),
-            drain_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -125,7 +124,12 @@ impl TelemetryService {
                     );
                 }
             } else {
-                match OpenOptions::new().create(true).append(true).open(&path).await {
+                match OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .await
+                {
                     Ok(file) => *writer_opt = Some(BufWriter::new(file)),
                     Err(e) => {
                         if is_disk_full(&e) {
@@ -199,9 +203,6 @@ impl TelemetryService {
                 _ = flush_interval.tick() => {
                     self.flush().await;
                     self.enforce_pending_cap().await;
-                    self.maybe_spawn_worker().await;
-                }
-                _ = self.drain_notify.notified() => {
                     self.maybe_spawn_worker().await;
                 }
             }
@@ -323,16 +324,16 @@ impl TelemetryService {
         }
 
         let pending_dir = self.telemetry_dir.join("pending");
-        let oldest = match list_pending_batches(&pending_dir).await {
-            Ok(batches) => batches.into_iter().next(),
+        let batches = match list_pending_batches(&pending_dir).await {
+            Ok(batches) => batches,
             Err(e) => {
                 error!("Failed to list pending telemetry batches: {}", e);
-                None
+                return;
             }
         };
-        let Some(batch) = oldest else {
+        if batches.is_empty() {
             return;
-        };
+        }
 
         let exe = match std::env::current_exe() {
             Ok(e) => e,
@@ -366,10 +367,9 @@ impl TelemetryService {
 
         let mut cmd = tokio::process::Command::new(exe);
         cmd.arg("telemetry-flush")
-            .arg("--batch-path")
-            .arg(&batch.path)
             .arg("--config")
-            .arg(config_json);
+            .arg(config_json)
+            .stdin(Stdio::piped());
 
         if run_maintenance {
             cmd.arg("--maintenance");
@@ -383,30 +383,53 @@ impl TelemetryService {
             }
         };
 
+        let batch_count = batches.len();
+        let total_bytes: u64 = batches.iter().map(|b| b.size).sum();
         info!(
-            "Spawned telemetry worker (PID: {:?}) for batch {:?}",
+            "Spawned telemetry worker (PID: {:?}) for {} pending batch(es) ({} bytes)",
             child.id(),
-            batch.path
+            batch_count,
+            total_bytes
         );
 
         self.worker_active.store(true, Ordering::SeqCst);
 
+        // Hand the assigned batch paths (oldest-first) to the worker over
+        // stdin, one per line, then close the pipe to signal the end of the
+        // list. A broken pipe means the worker exited early; its status is
+        // reported by the supervisor below.
+        if let Some(mut stdin) = child.stdin.take() {
+            tokio::spawn(async move {
+                let mut payload = String::new();
+                for batch in &batches {
+                    payload.push_str(&batch.path.to_string_lossy());
+                    payload.push('\n');
+                }
+                if let Err(e) = stdin.write_all(payload.as_bytes()).await {
+                    debug!("Failed to write batch paths to telemetry worker: {}", e);
+                }
+            });
+        }
+
         let worker_active = Arc::clone(&self.worker_active);
-        let drain_notify = Arc::clone(&self.drain_notify);
-        let worker_timeout = Duration::from_secs(self.config.worker_timeout_secs);
+        // The worker enforces a per-batch timeout itself; this watchdog is a
+        // safety net for hangs outside batch processing, so it scales with
+        // the size of the assignment.
+        let worker_timeout = Duration::from_secs(
+            self.config
+                .worker_timeout_secs
+                .saturating_mul(batch_count as u64),
+        );
 
         tokio::spawn(async move {
             let result = tokio::time::timeout(worker_timeout, child.wait()).await;
             match result {
                 Ok(Ok(status)) if status.success() => {
                     info!("Telemetry worker finished successfully");
-                    // Drain the next pending batch right away so the backlog
-                    // is processed as fast as the downstream allows.
-                    drain_notify.notify_one();
                 }
                 Ok(Ok(status)) => {
                     error!(
-                        "Telemetry worker failed with status: {}. Batch kept for retry.",
+                        "Telemetry worker failed with status: {}. Batches kept for retry.",
                         status
                     );
                 }
@@ -415,7 +438,7 @@ impl TelemetryService {
                 }
                 Err(_) => {
                     error!(
-                        "Telemetry worker timed out after {:?}; killing it. Batch kept for retry.",
+                        "Telemetry worker timed out after {:?}; killing it. Batches kept for retry.",
                         worker_timeout
                     );
                     let _ = child.kill().await;
@@ -519,10 +542,7 @@ mod tests {
     use super::*;
 
     fn temp_pending_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "dispenser-telemetry-test-{}",
-            Uuid::now_v7()
-        ));
+        let dir = std::env::temp_dir().join(format!("dispenser-telemetry-test-{}", Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

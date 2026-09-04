@@ -10,10 +10,15 @@ use tokio::{sync::Mutex, task::JoinSet};
 
 use crate::service::{
     cron_watcher::CronWatcher,
-    file::{CertbotSettings, DefaultNetworkConfig, EntrypointFile, GlobalProxyConfig, ProxySettings, ServiceFile},
+    file::{
+        CertbotSettings, DefaultNetworkConfig, EntrypointFile, GlobalProxyConfig, ProxySettings,
+        ServiceFile,
+    },
     instance::{ServiceInstance, ServiceInstanceConfig},
     manifest::ImageWatcher,
-    network::{NetworkInstance, ensure_default_network_with_config, get_used_ips, remove_default_network},
+    network::{
+        NetworkInstance, ensure_default_network_with_config, get_used_ips, remove_default_network,
+    },
     vars::{ServiceConfigError, ServiceVarsMaterialized, render_template},
 };
 
@@ -327,7 +332,8 @@ impl ServicesManager {
         // Allocate IP addresses using "Reserve then Fill" strategy
         // This queries Docker's IPAM to avoid "Address already in use" errors
         let default_network_config = config.entrypoint_file.default_network.clone();
-        let assigned_ips = allocate_ips(&config.services, existing_ips, &default_network_config).await?;
+        let assigned_ips =
+            allocate_ips(&config.services, existing_ips, &default_network_config).await?;
 
         // Iterate through each service entry in the config
         let mut join_set = JoinSet::new();
@@ -581,12 +587,15 @@ async fn allocate_ips(
 
     // Parse the base IP from the subnet CIDR (e.g., "172.28.0.0/16" -> 172.28.0.0)
     let base_ip: u32 = if let Some(ip_str) = subnet.split('/').next() {
-        ip_str.parse::<Ipv4Addr>()
+        ip_str
+            .parse::<Ipv4Addr>()
             .map(|ip| u32::from(ip))
-            .map_err(|_| ServiceConfigError::Config(format!(
-                "Invalid IP address in subnet '{}': expected format 'X.X.X.X/Y'",
-                subnet
-            )))?
+            .map_err(|_| {
+                ServiceConfigError::Config(format!(
+                    "Invalid IP address in subnet '{}': expected format 'X.X.X.X/Y'",
+                    subnet
+                ))
+            })?
     } else {
         return Err(ServiceConfigError::Config(format!(
             "Invalid subnet CIDR notation '{}': expected format 'X.X.X.X/Y'",
@@ -595,11 +604,9 @@ async fn allocate_ips(
     };
 
     // Reserve the gateway IP
-    let gateway_ip: Ipv4Addr = gateway.parse::<Ipv4Addr>()
-        .map_err(|_| ServiceConfigError::Config(format!(
-            "Invalid gateway IP address '{}'",
-            gateway
-        )))?;
+    let gateway_ip: Ipv4Addr = gateway.parse::<Ipv4Addr>().map_err(|_| {
+        ServiceConfigError::Config(format!("Invalid gateway IP address '{}'", gateway))
+    })?;
     used_ips.insert(gateway_ip);
 
     // Query Docker's IPAM to get IPs actually in use on the network
@@ -747,7 +754,9 @@ mod tests {
         existing.insert("service-b".to_string(), Ipv4Addr::new(172, 28, 0, 10));
 
         let config = DefaultNetworkConfig::default();
-        let assigned = allocate_ips(&services, Some(existing), &config).await.unwrap();
+        let assigned = allocate_ips(&services, Some(existing), &config)
+            .await
+            .unwrap();
 
         assert_eq!(assigned.len(), 3);
         // service-a gets the first available IP
@@ -780,7 +789,9 @@ mod tests {
         existing.insert("service-b".to_string(), Ipv4Addr::new(172, 28, 0, 2));
 
         let config = DefaultNetworkConfig::default();
-        let assigned = allocate_ips(&services, Some(existing), &config).await.unwrap();
+        let assigned = allocate_ips(&services, Some(existing), &config)
+            .await
+            .unwrap();
 
         assert_eq!(assigned.len(), 3);
         // service-a should skip .2 (used by service-b) and get .3
@@ -809,7 +820,9 @@ mod tests {
         existing.insert("service-removed".to_string(), Ipv4Addr::new(172, 28, 0, 5));
 
         let config = DefaultNetworkConfig::default();
-        let assigned = allocate_ips(&services, Some(existing), &config).await.unwrap();
+        let assigned = allocate_ips(&services, Some(existing), &config)
+            .await
+            .unwrap();
 
         assert_eq!(assigned.len(), 1);
         // service-a gets .2 (the removed service's IP is not reserved)

@@ -92,6 +92,9 @@ pub struct TelemetryConfig {
     pub max_pending_batches: u32,
     #[serde(default = "default_max_pending_size_mb")]
     pub max_pending_size_mb: u64,
+    /// Timeout budget for flushing a single telemetry batch in the worker
+    /// subprocess. The parent's watchdog scales this by the number of
+    /// assigned batches.
     #[serde(default = "default_worker_timeout_secs")]
     pub worker_timeout_secs: u64,
 }
